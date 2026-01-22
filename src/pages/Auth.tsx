@@ -122,7 +122,7 @@ const Auth = () => {
           {/* Mobile logo */}
           <div className="lg:hidden flex items-center gap-3 mb-8 justify-center">
             <div className="w-10 h-10">
-              <img src="/img/logo.png" alt="TeaTime logo" className="w-10 h-10 object-contain" />
+              <img src="/img/danfe.png" alt="TeaTime logo" className="w-10 h-10 object-contain" />
             </div>
             <div>
               <h1 className="font-display text-2xl font-semibold text-foreground">
