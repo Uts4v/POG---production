@@ -85,7 +85,7 @@ const Auth = () => {
           >
             <div className="flex items-center gap-4 mb-8">
               <div className="w-16 h-16">
-                <img src="/img/logo.png" alt="TeaTime logo" className="w-16 h-16 object-contain" />
+                <img src="/img/danfe.png" alt="TeaTime logo" className="w-16 h-16 object-contain" />
               </div>
               <div>
                 <h1 className="font-display text-4xl font-semibold">TeaTime</h1>

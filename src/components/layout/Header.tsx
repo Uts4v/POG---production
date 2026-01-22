@@ -1,6 +1,6 @@
 import { motion } from "framer-motion";
 import { useNavigate, useLocation } from "react-router-dom";
-import logo from "@/img/logo.png";
+import logo from "@/img/danfe.png";
 import { User, Settings, LogOut, Loader2, Shield } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuthContext } from "@/contexts/AuthContext";
