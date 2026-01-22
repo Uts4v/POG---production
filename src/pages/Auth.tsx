@@ -98,7 +98,7 @@ const Auth = () => {
             </h2>
             <p className="text-white/80 text-lg max-w-md leading-relaxed">
               Track your productivity, manage breaks mindfully, and earn Tea Points
-              for focused work. Join Nepal Tea Exchange's journey to mindful productivity.
+              for focused work. Join Danfe Tea journey to mindful productivity.
             </p>
 
             <div className="mt-12 space-y-4">
