@@ -1,0 +1,189 @@
+@import url("https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=Cormorant+Garamond:wght@400;500;600&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* TeaTime Tracker Design System
+   Inspired by Japanese tea ceremony aesthetics - calm, organic, warm
+   All colors in HSL format
+*/
+
+
+@layer base {
+  :root {
+    /* Core Tea Theme */
+    --background: 45 30% 97%;
+    --foreground: 150 20% 15%;
+
+    /* Card surfaces - warm cream */
+    --card: 45 40% 96%;
+    --card-foreground: 150 20% 15%;
+
+    /* Popover */
+    --popover: 45 40% 98%;
+    --popover-foreground: 150 20% 15%;
+
+    /* Primary - Yellow Theme */
+    --primary: 43 86% 63%;
+    --primary-foreground: 45 40% 98%;
+
+    /* Secondary - Warm Cream */
+    --secondary: 38 35% 92%;
+    --secondary-foreground: 150 20% 20%;
+
+    /* Muted - Soft sage */
+    --muted: 140 15% 90%;
+    --muted-foreground: 150 10% 45%;
+
+    /* Accent - Golden Amber (tea color) */
+    --accent: 38 70% 55%;
+    --accent-foreground: 150 20% 15%;
+
+    /* Status colors */
+    --destructive: 0 65% 50%;
+    --destructive-foreground: 0 0% 100%;
+
+    /* Borders */
+    --border: 140 15% 85%;
+    --input: 140 15% 88%;
+    --ring: 43 86% 63%;
+
+    --radius: 0.75rem;
+
+    /* Custom tea colors */
+    --tea-leaf: 43 80% 50%;
+    --tea-light: 43 70% 90%;
+    --tea-brew: 28 60% 45%;
+    --tea-steam: 45 20% 95%;
+    --tea-forest: 43 60% 30%;
+
+    /* Gradients */
+    --gradient-tea: linear-gradient(135deg, hsl(38 70% 55%) 0%, hsl(38 70% 55%) 100%);
+    --gradient-card: linear-gradient(180deg, hsl(45 40% 98%) 0%, hsl(45 35% 94%) 100%);
+    --gradient-warm: linear-gradient(135deg, hsl(38 70% 55%) 0%, hsl(28 60% 50%) 100%);
+
+    /* Shadows */
+    --shadow-soft: 0 4px 20px -4px hsl(150 20% 15% / 0.08);
+    --shadow-card: 0 8px 32px -8px hsl(150 20% 15% / 0.12);
+    --shadow-glow: 0 0 40px -10px hsl(145 35% 38% / 0.3);
+
+    /* Sidebar */
+    --sidebar-background: 45 35% 95%;
+    --sidebar-foreground: 150 20% 20%;
+    --sidebar-primary: 145 35% 38%;
+    --sidebar-primary-foreground: 45 40% 98%;
+    --sidebar-accent: 140 20% 88%;
+    --sidebar-accent-foreground: 150 20% 20%;
+    --sidebar-border: 140 15% 85%;
+    --sidebar-ring: 145 35% 38%;
+  }
+
+  .dark {
+    --background: 0 0% 0%;
+    --foreground: 0 0% 100%;
+
+    --card: 0 0% 8%;
+    --card-foreground: 0 0% 100%;
+
+    --popover: 0 0% 3%;
+    --popover-foreground: 0 0% 100%;
+
+    --primary: 43 80% 60%;
+    --primary-foreground: 0 0% 0%;
+
+    --secondary: 0 0% 10%;
+    --secondary-foreground: 0 0% 95%;
+
+    --muted: 0 0% 12%;
+    --muted-foreground: 0 0% 75%;
+
+    --accent: 38 65% 50%;
+    --accent-foreground: 0 0% 0%;
+
+    --destructive: 0 60% 45%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 0 0% 15%;
+    --input: 0 0% 12%;
+    --ring: 43 80% 60%;
+
+    --tea-leaf: 43 75% 55%;
+    --tea-light: 43 60% 30%;
+    --tea-brew: 28 55% 50%;
+    --tea-steam: 0 0% 8%;
+    --tea-forest: 43 55% 35%;
+
+    --sidebar-background: 0 0% 2%;
+    --sidebar-foreground: 0 0% 95%;
+    --sidebar-primary: 145 40% 50%;
+    --sidebar-primary-foreground: 0 0% 0%;
+    --sidebar-accent: 0 0% 8%;
+    --sidebar-accent-foreground: 0 0% 95%;
+    --sidebar-border: 0 0% 15%;
+    --sidebar-ring: 145 40% 50%;
+
+    /* Dark mode gradients */
+    --gradient-tea: linear-gradient(135deg, hsl(38 65% 50%) 0%, hsl(38 65% 50%) 100%);
+    --gradient-card: linear-gradient(180deg, hsl(0 0% 5%) 0%, hsl(0 0% 8%) 100%);
+    --gradient-warm: linear-gradient(135deg, hsl(38 65% 50%) 0%, hsl(28 55% 50%) 100%);
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'Plus Jakarta Sans', sans-serif;
+  }
+
+  h1, h2, h3, .font-display {
+    font-family: 'Cormorant Garamond', serif;
+  }
+}
+
+@layer components {
+  .tea-card {
+    @apply bg-card rounded-2xl p-6;
+    box-shadow: var(--shadow-card);
+    background: var(--gradient-card);
+  }
+
+  .tea-button-primary {
+    background: var(--gradient-tea);
+    @apply text-primary-foreground px-6 py-3 rounded-xl font-medium;
+    box-shadow: var(--shadow-soft);
+    transition: all 0.3s ease;
+  }
+
+  .tea-button-primary:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-glow);
+  }
+
+  .tea-glow {
+    box-shadow: var(--shadow-glow);
+  }
+
+  .tea-text-gradient {
+    background: var(--gradient-tea);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .status-working {
+    @apply bg-primary/10 text-primary border border-primary/20;
+  }
+
+  .status-break {
+    @apply bg-accent/10 text-accent border border-accent/20;
+  }
+
+  .status-idle {
+    @apply bg-muted text-muted-foreground border border-border;
+  }
+}
