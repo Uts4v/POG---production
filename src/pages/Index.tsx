@@ -1,3 +1,4 @@
+
 import { useEffect } from "react";
 import { motion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
@@ -187,9 +188,10 @@ const Index = () => {
               <div className="w-5 h-5 text-primary">
                 <TeaLeafIcon />
               </div>
-              <span>POG (Proof of Grind)</span>
+              <span>Proof of Grind</span>
             </div>
-            <p>© 2026 POG. Brew productivity, one cup at a time.</p>
+            <p>© 2026 Utsav Shrestha. All rights reserved.</p>
+              <p>Brew productivity, one cup at a time.</p>
           </div>
         </div>
       </footer>

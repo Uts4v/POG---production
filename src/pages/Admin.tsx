@@ -1,3 +1,9 @@
+/*
+ * © 2026 Utsav Shrestha. All rights reserved.
+ * This software and its source code are the proprietary property of Utsav Shrestha.
+ * No part of this code may be copied, reproduced, or distributed without 
+ * express written permission.
+ */
 import { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
@@ -44,6 +50,7 @@ import {
   Shield,
   ShieldCheck,
   RefreshCw,
+  Search,
   Calendar,
   DollarSign,
   BarChart3,
@@ -156,7 +163,16 @@ const Admin = () => {
   const [users, setUsers] = useState<UserWithStats[]>([]);
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
   const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
+
+   // Filter users based on search
+  const filteredUsers = users.filter(
+    (u) =>
+      u.fullName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      u.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      u.department?.toLowerCase().includes(searchQuery.toLowerCase())
+  );
 
   // Analytics modal states (existing)
   const [analyticsUser, setAnalyticsUser] = useState<UserWithStats | null>(null);
@@ -650,8 +666,10 @@ const Admin = () => {
           ))}
         </div>
         {/* Team Members Table */}
+        
         <Card className="border-none shadow-2xl bg-card/85 backdrop-blur-md rounded-2xl overflow-hidden">
           <CardHeader className="bg-gradient-to-r from-indigo-50/80 to-purple-50/80 dark:from-indigo-950/50 dark:to-purple-950/50 pb-6">
+          
             <CardTitle className="text-2xl font-semibold text-foreground">Team Members</CardTitle>
             <CardDescription className="text-muted-foreground">
               {users.length} employees • real-time overview & management
@@ -1050,7 +1068,7 @@ const Admin = () => {
                       <div className="inline-flex items-center justify-center w-10 h-10 rounded-full mb-3 mx-auto bg-accent/10 text-accent">
                         <Calendar className="w-5 h-5" />
                       </div>
-                      <p className="text-sm text-muted-foreground">Sessions (Month)</p>
+                      <p className="text-sm text-muted-foreground">Active Days (Month)</p>
                       <p className="text-2xl font-semibold mt-1">{selectedEmployee.totalSessionsThisMonth}</p>
                     </div>
                   </div>

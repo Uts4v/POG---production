@@ -1,3 +1,9 @@
+/*
+ * © 2026 Utsav Shrestha. All rights reserved.
+ * This software and its source code are the proprietary property of Utsav Shrestha.
+ * No part of this code may be copied, reproduced, or distributed without 
+ * express written permission.
+ */
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
