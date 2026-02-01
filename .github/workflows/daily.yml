@@ -1,0 +1,27 @@
+name: Daily Subscription Check
+on:
+  schedule:
+    - cron: '0 0 * * *' # Runs every day at midnight UTC (adjust for Kathmandu time if needed)
+  workflow_dispatch: # Allows manual trigger for testing
+
+jobs:
+  check-subscriptions:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run subscription check
+        run: node check-expiry.js
+        env:
+          FIREBASE_CONFIG: ${{ secrets.FIREBASE_CONFIG }}
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
