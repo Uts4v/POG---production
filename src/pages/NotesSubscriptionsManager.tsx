@@ -305,18 +305,18 @@ export default function NotesSubscriptionsManager() {
   return (
     <>
       <Header />
-      <div className="container mx-auto p-6 space-y-6">
-        <div className="flex items-center justify-between">
+      <div className="container mx-auto p-4 sm:p-6 space-y-6">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <h1 className="text-2xl font-bold">
             {profile?.role === "admin" ? "Announcements & Subscriptions" : "Announcements"}
           </h1>
-          <div className="flex gap-2">
+          <div className="flex flex-col gap-2 sm:flex-row sm:gap-2">
             {/* Admin Only - Send Announcement and Add Subscription */}
             {profile?.role === "admin" && (
               <>
                 <Dialog open={noteDialogOpen} onOpenChange={setNoteDialogOpen}>
                   <DialogTrigger asChild>
-                    <Button>
+                    <Button className="w-full sm:w-auto">
                       <Send className="h-4 w-4 mr-2" />
                       Send Announcement
                     </Button>
@@ -384,7 +384,7 @@ export default function NotesSubscriptionsManager() {
 
                 <Dialog open={subDialogOpen} onOpenChange={setSubDialogOpen}>
                   <DialogTrigger asChild>
-                    <Button variant="outline">
+                    <Button variant="outline" className="w-full sm:w-auto">
                       <Plus className="h-4 w-4 mr-2" />
                       Add Subscription
                     </Button>
@@ -446,13 +446,13 @@ export default function NotesSubscriptionsManager() {
         </div>
 
         <Tabs defaultValue="announcements" className="w-full">
-          <TabsList>
-            <TabsTrigger value="announcements">
+          <TabsList className="w-full flex flex-col sm:flex-row">
+            <TabsTrigger value="announcements" className="w-full sm:w-auto justify-start sm:justify-center">
               <Bell className="h-4 w-4 mr-2" />
               Announcements ({notes.filter(n => !n.isRead && (n.recipientId === user?.uid || n.recipientId === "all")).length})
             </TabsTrigger>
             {profile?.role === "admin" && (
-            <TabsTrigger value="subscriptions">
+            <TabsTrigger value="subscriptions" className="w-full sm:w-auto justify-start sm:justify-center">
                 <CalendarIcon className="h-4 w-4 mr-2" />
                 Subscriptions ({subscriptions.filter(s => s.isActive).length})
               </TabsTrigger>
@@ -471,9 +471,9 @@ export default function NotesSubscriptionsManager() {
               notes.map(note => (
                 <Card key={note.id} className={!note.isRead && (note.recipientId === user?.uid || note.recipientId === "all") ? "border-primary" : ""}>
                   <CardHeader>
-                    <div className="flex items-start justify-between">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                       <div className="space-y-1">
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
                           <CardTitle className="text-lg">{note.subject}</CardTitle>
                           <Badge variant={getPriorityColor(note.priority)}>
                             {note.priority}
@@ -489,7 +489,7 @@ export default function NotesSubscriptionsManager() {
                           {note.createdAt?.toDate?.()?.toLocaleString()}
                         </CardDescription>
                       </div>
-                      <div className="flex gap-2">
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                         {!note.isRead && (note.recipientId === user?.uid || note.recipientId === "all") && (
                           <Button
                             size="sm"
@@ -538,10 +538,10 @@ export default function NotesSubscriptionsManager() {
                   
                   return (
                     <Card key={sub.id} className={isExpiringSoon && sub.isActive ? "border-destructive" : ""}>
-                      <CardHeader>
-                        <div className="flex items-start justify-between">
+                    <CardHeader>
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                           <div className="space-y-1">
-                            <div className="flex items-center gap-2">
+                            <div className="flex flex-wrap items-center gap-2">
                               <CardTitle>{sub.name}</CardTitle>
                               <Badge variant={sub.isActive ? "default" : "secondary"}>
                                 {sub.isActive ? "Active" : "Inactive"}
@@ -558,7 +558,7 @@ export default function NotesSubscriptionsManager() {
                               Deadline: {deadlineDateObj?.toLocaleDateString()}
                             </CardDescription>
                           </div>
-                          <div className="flex gap-2">
+                          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                             <Button
                               size="sm"
                               variant="outline"
@@ -577,7 +577,7 @@ export default function NotesSubscriptionsManager() {
                         </div>
                       </CardHeader>
                       <CardContent>
-                        <div className="grid grid-cols-3 gap-4">
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                           <div>
                             <div className="flex items-center gap-2 text-sm text-muted-foreground">
                               <CalendarIcon className="h-4 w-4" />
