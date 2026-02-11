@@ -1,5 +1,8 @@
 name: Daily Subscription Check
 on:
+  schedule:
+    - cron: '15 3 * * *' # 09:00 Asia/Kathmandu
+    - cron: '15 9 * * *' # 15:00 Asia/Kathmandu
   workflow_dispatch:
     inputs:
       mode:
