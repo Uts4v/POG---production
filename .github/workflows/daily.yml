@@ -1,8 +1,11 @@
 name: Daily Subscription Check
 on:
-  schedule:
-    - cron: '0 0 * * *' # Runs every day at midnight UTC (adjust for Kathmandu time if needed)
-  workflow_dispatch: # Allows manual trigger for testing
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'check (normal) or test (send a test message)'
+        required: true
+        default: 'check'
 
 jobs:
   check-subscriptions:
@@ -20,8 +23,16 @@ jobs:
         run: npm install
 
       - name: Run subscription check
+        if: ${{ github.event.inputs.mode != 'test' }}
         run: node check-expiry.js
         env:
           FIREBASE_CONFIG: ${{ secrets.FIREBASE_CONFIG }}
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+
+      - name: Send test message
+        if: ${{ github.event.inputs.mode == 'test' }}
+        run: node manual-telegram.js
+        env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
