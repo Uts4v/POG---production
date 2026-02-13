@@ -13,23 +13,35 @@ on:
 jobs:
   deploy_functions:
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js (Node 22)
+        uses: actions/setup-node@v4
         with:
           node-version: "22"
+          cache: "npm"
+          cache-dependency-path: |
+            functions/package-lock.json
+            package-lock.json
 
       - name: Install Functions dependencies
         run: npm ci --prefix functions
 
-      - name: Install Firebase CLI
-        run: npm install -g firebase-tools
+      # 👇 PASTE LINT STEP HERE
+      - name: Lint Functions
+        run: npm run lint --prefix functions
 
-      - name: Authenticate with Firebase service account
+      - name: Create Firebase service account file
         run: |
-          echo '${{ secrets.FIREBASE_SERVICE_ACCOUNT_NTE_CLOCKIN }}' > "$HOME/firebase-sa.json"
+          cat > "$HOME/firebase-sa.json" << 'EOF'
+          ${{ secrets.FIREBASE_SERVICE_ACCOUNT_NTE_CLOCKIN }}
+          EOF
           echo "GOOGLE_APPLICATION_CREDENTIALS=$HOME/firebase-sa.json" >> "$GITHUB_ENV"
 
       - name: Deploy Functions
-        run: firebase deploy --only functions --project nte-clockin --non-interactive
+        run: npx -y firebase-tools@latest deploy --only functions --project nte-clockin --non-interactive
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ env.GOOGLE_APPLICATION_CREDENTIALS }}
