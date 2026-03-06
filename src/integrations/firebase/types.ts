@@ -24,6 +24,17 @@ export interface Profile {
 }
 
 // Work session document (stored in users/{userId}/sessions/{sessionId})
+export interface ClockInLocation {
+  lat: number;
+  lng: number;
+  accuracy: number; // metres
+  label: string;      // human-readable address
+  fullAddress: string;
+  city: string;
+  country: string;
+  capturedAt: string; // ISO timestamp when location was captured
+}
+
 export interface WorkSession {
   id: string;
   userId: string;
@@ -35,6 +46,8 @@ export interface WorkSession {
   status: "idle" | "working" | "break" | "completed";
   createdAt: Timestamp;
   updatedAt: Timestamp;
+  // optional location data recorded at clock-in
+  clockInLocation?: ClockInLocation;
 }
 
 // Break log document (stored in users/{userId}/sessions/{sessionId}/breaks/{breakId})

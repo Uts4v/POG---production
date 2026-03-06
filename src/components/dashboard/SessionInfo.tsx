@@ -55,6 +55,11 @@ export const SessionInfo = ({ session, breakLogs }: SessionInfoProps) => {
                 {formatTimeOfDay(session.workStartTime)}
               </span>
             </div>
+            {session.clockInLocation && (
+              <div className="mt-1 text-xs text-muted-foreground truncate">
+                📍 {session.clockInLocation.label}
+              </div>
+            )}
           </div>
 
           {session.workEndTime && (

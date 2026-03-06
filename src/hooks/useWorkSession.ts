@@ -18,6 +18,8 @@ import {
 import { db } from "@/integrations/firebase/client";
 import { useAuthContext } from "@/contexts/AuthContext";
 import type { TimerStatus, WorkSession, BreakLog } from "@/integrations/firebase/types";
+import { toast } from "sonner";
+import { useLocationCapture } from "@/hooks/useLocation";  // new hook for geolocation
 
 export const useWorkSession = () => {
   const { user } = useAuthContext();
@@ -167,11 +169,23 @@ export const useWorkSession = () => {
     };
   }, [session?.status, calculateElapsedTime, playBreakAlert, stopBreakAlert, isBreakAlertPlaying]);
 
+  const { captureLocation } = useLocationCapture();
+
   const clockIn = async () => {
     if (!user) return;
 
     try {
-      const sessionData = {
+      // try to get location data; if it fails we block the clock-in and show a toast
+      let locationData;
+      try {
+        locationData = await captureLocation();
+      } catch (locErr: any) {
+        // permission denied or other error; surface to user
+        toast.error(locErr?.message || "Failed to capture location. Clock-in blocked.");
+        throw locErr;
+      }
+
+      const sessionData: Partial<WorkSession> = {
         userId: user.uid,
         date: today,
         workStartTime: Timestamp.now(),
@@ -182,24 +196,32 @@ export const useWorkSession = () => {
         updatedAt: Timestamp.now(),
       };
 
+      if (locationData) {
+        sessionData.clockInLocation = locationData as any;
+      }
+
       if (session) {
         // Update existing session
-        await updateDoc(doc(db, "users", user.uid, "sessions", session.id), {
+        const updatePayload: any = {
           workStartTime: Timestamp.now(),
           status: "working",
           workEndTime: null,
           updatedAt: Timestamp.now(),
-        });
-        setSession({ ...session, workStartTime: Timestamp.now(), status: "working", workEndTime: null });
+        };
+        if (locationData) updatePayload.clockInLocation = locationData;
+
+        await updateDoc(doc(db, "users", user.uid, "sessions", session.id), updatePayload);
+        setSession({ ...session, workStartTime: Timestamp.now(), status: "working", workEndTime: null, ...(locationData ? { clockInLocation: locationData } : {}) });
       } else {
         // Create new session
         const docRef = await addDoc(collection(db, "users", user.uid, "sessions"), sessionData);
-        setSession({ id: docRef.id, ...sessionData });
+        setSession({ id: docRef.id, ...sessionData } as WorkSession);
       }
 
       setBreakLogs([]);
     } catch (error) {
       console.error("Error clocking in:", error);
+      // error may already have been shown via toast
     }
   };
 

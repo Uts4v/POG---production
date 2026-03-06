@@ -31,6 +31,7 @@ import {
   CardTitle,
   CardDescription,
 } from "@/components/ui/card";
+import AdminLocationView from "@/components/admin/AdminLocationView";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -123,6 +124,8 @@ interface UserWithStats extends Profile {
   sessionHistory?: WorkSession[];
   prev30DaysFocusRate?: number;
   prev30DaysWorkHours?: number;
+  // add department so filtering/search works
+  department?: string;
 }
 
 interface Subscription {
@@ -1178,6 +1181,7 @@ const Admin = () => {
                           <TableHeader>
                             <TableRow className="bg-muted/50">
                               <TableHead className="pl-6">Date</TableHead>
+                              <TableHead>Location</TableHead>
                               <TableHead>Status</TableHead>
                               <TableHead className="text-right">Work</TableHead>
                               <TableHead className="text-right">Break</TableHead>
@@ -1191,6 +1195,9 @@ const Admin = () => {
                                 <TableRow key={s.id}>
                                   <TableCell className="pl-6">{new Date(s.date).toLocaleDateString()}</TableCell>
                                   <TableCell>
+                                    <AdminLocationView session={s} />
+                                  </TableCell>
+                                  <TableCell>
                                     <Badge className={statusBadgeStyles[s.status]}>{s.status}</Badge>
                                   </TableCell>
                                   <TableCell className="text-right">{formatTime(s.totalWorkDuration)}</TableCell>
@@ -1203,7 +1210,7 @@ const Admin = () => {
                               ))
                             ) : (
                               <TableRow>
-                                <TableCell colSpan={6} className="text-center py-12 text-muted-foreground">
+                                <TableCell colSpan={7} className="text-center py-12 text-muted-foreground">
                                   No recent sessions found
                                 </TableCell>
                               </TableRow>
