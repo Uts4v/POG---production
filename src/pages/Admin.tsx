@@ -390,10 +390,10 @@ const Admin = () => {
         {/* Top bar */}
         <div className="flex items-center justify-between mb-8">
           <div className="flex items-center gap-3.5">
-            <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
+            {/* <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
               style={{background:"linear-gradient(135deg,#6366f1,#8b5cf6)"}}>
               <Zap className="w-4.5 h-4.5 text-white"/>
-            </div>
+            </div> */}
             <div>
               <h1 className="ph text-lg font-bold text-white leading-none">POG Admin</h1>
               <p className="text-[9px] text-white/20 mt-0.5">
