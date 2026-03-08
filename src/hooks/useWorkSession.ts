@@ -178,9 +178,12 @@ export const useWorkSession = () => {
       // try to get location data; if it fails we block the clock-in and show a toast
       let locationData;
       try {
+        console.log("Attempting to capture location...");
         locationData = await captureLocation();
+        console.log("Location captured successfully:", locationData);
       } catch (locErr: any) {
         // permission denied or other error; surface to user
+        console.error("Location capture failed:", locErr);
         toast.error(locErr?.message || "Failed to capture location. Clock-in blocked.");
         throw locErr;
       }
