@@ -4,14 +4,14 @@
  * No part of this code may be copied, reproduced, or distributed without
  * express written permission.
  */
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuthContext } from "@/contexts/AuthContext";
 import { db } from "@/integrations/firebase/client";
 import { formatTimeShort } from "@/hooks/useWorkSession";
 import { toast } from "sonner";
 import {
-  collection, doc, deleteDoc, getDocs, Timestamp,
+  collection, doc, deleteDoc, getDocs, onSnapshot, Timestamp,
   updateDoc, query, orderBy, limit, where,
 } from "firebase/firestore";
 import { Profile } from "@/integrations/firebase/types";
@@ -55,6 +55,13 @@ interface WorkSession {
   };
 }
 
+interface BreakLog {
+  id: string;
+  breakStart: Timestamp;
+  breakEnd?: Timestamp;
+  createdAt?: Timestamp;
+}
+
 interface UserWithStats extends Profile {
   todayWorkTime: number; todayBreakTime: number;
   monthWorkTime: number; monthBreakTime: number;
@@ -82,6 +89,27 @@ interface Subscription {
 const CHART_COLORS = ["#818cf8","#34d399","#fbbf24","#f87171","#a78bfa","#38bdf8","#fb923c","#4ade80"];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function calcLiveTimes(session: WorkSession | null | undefined, breaks: BreakLog[] | undefined, nowMs: number) {
+  if (!session?.workStartTime) return null;
+
+  const startMs = session.workStartTime.toDate().getTime();
+  const endMs = session.workEndTime ? session.workEndTime.toDate().getTime() : nowMs;
+  const totalElapsed = Math.max(0, Math.floor((endMs - startMs) / 1000));
+
+  const br = breaks ?? [];
+  const breakSeconds = br
+    .filter(b => b.breakStart?.toDate?.().getTime?.() >= startMs)
+    .reduce((acc, b) => {
+      const bs = b.breakStart.toDate().getTime();
+      const be = b.breakEnd ? b.breakEnd.toDate().getTime() : nowMs;
+      return acc + Math.max(0, Math.floor((be - bs) / 1000));
+    }, 0);
+
+  const workSeconds = Math.max(0, totalElapsed - breakSeconds);
+  const st = session.status === "working" || session.status === "break" ? session.status : "idle";
+  return { workSeconds, breakSeconds, status: st as "idle" | "working" | "break", isActive: st !== "idle" };
+}
 
 function formatTime(s: number) {
   if (!s || s < 0) s = 0;
@@ -149,7 +177,119 @@ const Admin = () => {
   const [empOpen,       setEmpOpen]       = useState(false);
   const [empLoading,    setEmpLoading]    = useState(false);
 
-  const filtered = users.filter(u =>
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const [liveByUser, setLiveByUser] = useState<Record<string, { session: WorkSession | null; breaks: BreakLog[] }>>({});
+  const sessionUnsubsRef = useRef(new Map<string, () => void>());
+  const breaksUnsubsRef = useRef(new Map<string, () => void>());
+  const sessionIdRef = useRef(new Map<string, string | null>());
+
+  useEffect(() => {
+    const iv = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(iv);
+  }, []);
+
+  const cleanupLiveForUser = useCallback((uid: string) => {
+    const su = sessionUnsubsRef.current.get(uid);
+    if (su) su();
+    sessionUnsubsRef.current.delete(uid);
+
+    const bu = breaksUnsubsRef.current.get(uid);
+    if (bu) bu();
+    breaksUnsubsRef.current.delete(uid);
+
+    sessionIdRef.current.delete(uid);
+
+    setLiveByUser(prev => {
+      if (!(uid in prev)) return prev;
+      const next = { ...prev };
+      delete next[uid];
+      return next;
+    });
+  }, []);
+
+  const cleanupAllLive = useCallback(() => {
+    for (const uid of Array.from(sessionUnsubsRef.current.keys())) cleanupLiveForUser(uid);
+  }, [cleanupLiveForUser]);
+
+  useEffect(() => {
+    if (!user || profile?.role !== "admin") {
+      cleanupAllLive();
+      return;
+    }
+
+    const todayStr = new Date().toISOString().split("T")[0];
+    const ids = new Set(users.map(u => u.id));
+
+    for (const uid of Array.from(sessionUnsubsRef.current.keys())) {
+      if (!ids.has(uid)) cleanupLiveForUser(uid);
+    }
+
+    users.forEach(u => {
+      if (sessionUnsubsRef.current.has(u.id)) return;
+
+      const sessionsQ = query(collection(db, "users", u.id, "sessions"), where("date", "==", todayStr));
+      const unsubSessions = onSnapshot(sessionsQ, snap => {
+        const all = snap.docs.map(d => ({ id: d.id, ...d.data() })) as WorkSession[];
+        const latest =
+          all.length <= 1
+            ? (all[0] ?? null)
+            : all.reduce((best, cur) => {
+                const bc = best?.createdAt?.toDate?.().getTime?.() ?? 0;
+                const cc = cur?.createdAt?.toDate?.().getTime?.() ?? 0;
+                return cc >= bc ? cur : best;
+              }, all[0]);
+
+        setLiveByUser(prev => ({
+          ...prev,
+          [u.id]: { session: latest, breaks: prev[u.id]?.breaks ?? [] },
+        }));
+
+        const nextSessionId = latest?.id ?? null;
+        const prevSessionId = sessionIdRef.current.get(u.id) ?? null;
+        if (nextSessionId === prevSessionId) return;
+
+        sessionIdRef.current.set(u.id, nextSessionId);
+
+        const prevBreaksUnsub = breaksUnsubsRef.current.get(u.id);
+        if (prevBreaksUnsub) prevBreaksUnsub();
+        breaksUnsubsRef.current.delete(u.id);
+
+        if (!nextSessionId) {
+          setLiveByUser(prev => ({
+            ...prev,
+            [u.id]: { session: prev[u.id]?.session ?? null, breaks: [] },
+          }));
+          return;
+        }
+
+        const breaksQ = query(
+          collection(db, "users", u.id, "sessions", nextSessionId, "breaks"),
+          orderBy("breakStart", "asc"),
+        );
+        const unsubBreaks = onSnapshot(breaksQ, bsnap => {
+          const br = bsnap.docs.map(d => ({ id: d.id, ...d.data() })) as BreakLog[];
+          setLiveByUser(prev => ({
+            ...prev,
+            [u.id]: { session: prev[u.id]?.session ?? null, breaks: br },
+          }));
+        });
+
+        breaksUnsubsRef.current.set(u.id, unsubBreaks);
+      });
+
+      sessionUnsubsRef.current.set(u.id, unsubSessions);
+    });
+  }, [users, user, profile?.role, cleanupAllLive, cleanupLiveForUser]);
+
+  useEffect(() => () => cleanupAllLive(), [cleanupAllLive]);
+
+  const viewUsers = users.map(u => {
+    const live = calcLiveTimes(liveByUser[u.id]?.session, liveByUser[u.id]?.breaks, nowMs);
+    if (!live) return u;
+    return { ...u, todayWorkTime: live.workSeconds, todayBreakTime: live.breakSeconds, currentStatus: live.status, isActive: live.isActive };
+  });
+
+  const filtered = viewUsers.filter(u =>
     u.fullName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
     u.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
     u.department?.toLowerCase().includes(searchQuery.toLowerCase())
@@ -337,19 +477,19 @@ const Admin = () => {
 
   // ── Derived data ───────────────────────────────────────────────────────────
 
-  const working  = users.filter(u=>u.currentStatus==="working").length;
-  const onBreak  = users.filter(u=>u.currentStatus==="break").length;
-  const offline  = users.filter(u=>u.currentStatus==="idle").length;
-  const avgFocus = users.length ? users.reduce((a,u)=>a+u.focusRate,0)/users.length : 0;
+  const working  = viewUsers.filter(u=>u.currentStatus==="working").length;
+  const onBreak  = viewUsers.filter(u=>u.currentStatus==="break").length;
+  const offline  = viewUsers.filter(u=>u.currentStatus==="idle").length;
+  const avgFocus = viewUsers.length ? viewUsers.reduce((a,u)=>a+u.focusRate,0)/viewUsers.length : 0;
   const totalCost= subscriptions.filter(s=>s.isActive).reduce((a,s)=>a+s.cost,0);
-  const avgWork  = users.length ? users.reduce((a,u)=>a+u.todayWorkTime,0)/users.length : 0;
+  const avgWork  = viewUsers.length ? viewUsers.reduce((a,u)=>a+u.todayWorkTime,0)/viewUsers.length : 0;
 
   const weeklyData = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"].map(day=>({
     day:day.slice(0,3),
-    ...Object.fromEntries(users.map(u=>[u.fullName||"Unknown",Math.round((u.weeklyWorkPattern[day]||0)/3600)])),
+    ...Object.fromEntries(viewUsers.map(u=>[u.fullName||"Unknown",Math.round((u.weeklyWorkPattern[day]||0)/3600)])),
   }));
 
-  const perfData = users.map(u=>({
+  const perfData = viewUsers.map(u=>({
     name:(u.fullName||"Unknown").split(" ")[0],
     fullName:u.fullName||"Unknown",
     "Work Hours":parseFloat(fmtHrs(u.monthWorkTime)),
@@ -370,6 +510,10 @@ const Admin = () => {
     {id:"locations",     label:"Locations",     icon:MapIcon},
     {id:"subscriptions", label:"Subscriptions", icon:CreditCard},
   ] as const;
+
+  const selLive = selEmp ? calcLiveTimes(liveByUser[selEmp.id]?.session, liveByUser[selEmp.id]?.breaks, nowMs) : null;
+  const selTodayWork = selEmp ? (selLive?.workSeconds ?? selEmp.todayWorkTime) : 0;
+  const selTodayBreak = selEmp ? (selLive?.breakSeconds ?? selEmp.todayBreakTime) : 0;
 
   // ─────────────────────────────────────────────────────────────────────────
   return (
@@ -605,8 +749,8 @@ const Admin = () => {
                       </div>
 
                       <div>
-                        <p className="text-xs font-medium text-white">{formatTime(u.todayWorkTime)}</p>
-                        <p className="text-[9px] text-white/20">brk {formatTime(u.todayBreakTime)}</p>
+                        <p className="text-xs font-medium text-white">{formatTimeShort(u.todayWorkTime)}</p>
+                        <p className="text-[9px] text-white/20">brk {formatTimeShort(u.todayBreakTime)}</p>
                       </div>
 
                       <div>
@@ -939,8 +1083,8 @@ const Admin = () => {
                 <TabsContent value="overview" className="mt-0 space-y-4">
                   <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
                     {[
-                      {icon:Clock,    label:"Today Work",  val:formatTimeShort(selEmp.todayWorkTime),         c:"#818cf8"},
-                      {icon:Coffee,   label:"Today Break", val:formatTimeShort(selEmp.todayBreakTime),        c:"#fbbf24"},
+                      {icon:Clock,    label:"Today Work",  val:formatTimeShort(selTodayWork),                c:"#818cf8"},
+                      {icon:Coffee,   label:"Today Break", val:formatTimeShort(selTodayBreak),               c:"#fbbf24"},
                       {icon:Calendar, label:"Active Days", val:String(selEmp.totalSessionsThisMonth),        c:"#38bdf8"},
                       {icon:Activity, label:"Avg Daily",   val:formatTimeShort(selEmp.averageDailyWorkTime), c:"#34d399"},
                     ].map(m=>(
