@@ -18,6 +18,7 @@ import { Profile } from "@/integrations/firebase/types";
 import AdminLocationView from "@/components/admin/AdminLocationView";
 import EmployeeLocationsMap from "@/components/admin/EmployeeLocationsMap";
 import AllEmployeesLocationsMap from "@/components/admin/AllEmployeesLocationsMap";
+import AttendanceCalendar from "@/components/admin/Attendencecalendar";
 import { Button } from "@/components/ui/button";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel,
@@ -90,27 +91,6 @@ const CHART_COLORS = ["#818cf8","#34d399","#fbbf24","#f87171","#a78bfa","#38bdf8
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function calcLiveTimes(session: WorkSession | null | undefined, breaks: BreakLog[] | undefined, nowMs: number) {
-  if (!session?.workStartTime) return null;
-
-  const startMs = session.workStartTime.toDate().getTime();
-  const endMs = session.workEndTime ? session.workEndTime.toDate().getTime() : nowMs;
-  const totalElapsed = Math.max(0, Math.floor((endMs - startMs) / 1000));
-
-  const br = breaks ?? [];
-  const breakSeconds = br
-    .filter(b => b.breakStart?.toDate?.().getTime?.() >= startMs)
-    .reduce((acc, b) => {
-      const bs = b.breakStart.toDate().getTime();
-      const be = b.breakEnd ? b.breakEnd.toDate().getTime() : nowMs;
-      return acc + Math.max(0, Math.floor((be - bs) / 1000));
-    }, 0);
-
-  const workSeconds = Math.max(0, totalElapsed - breakSeconds);
-  const st = session.status === "working" || session.status === "break" ? session.status : "idle";
-  return { workSeconds, breakSeconds, status: st as "idle" | "working" | "break", isActive: st !== "idle" };
-}
-
 function formatTime(s: number) {
   if (!s || s < 0) s = 0;
   return `${Math.floor(s/3600)}h ${Math.floor((s%3600)/60)}m`;
@@ -177,119 +157,7 @@ const Admin = () => {
   const [empOpen,       setEmpOpen]       = useState(false);
   const [empLoading,    setEmpLoading]    = useState(false);
 
-  const [nowMs, setNowMs] = useState(() => Date.now());
-  const [liveByUser, setLiveByUser] = useState<Record<string, { session: WorkSession | null; breaks: BreakLog[] }>>({});
-  const sessionUnsubsRef = useRef(new Map<string, () => void>());
-  const breaksUnsubsRef = useRef(new Map<string, () => void>());
-  const sessionIdRef = useRef(new Map<string, string | null>());
-
-  useEffect(() => {
-    const iv = setInterval(() => setNowMs(Date.now()), 1000);
-    return () => clearInterval(iv);
-  }, []);
-
-  const cleanupLiveForUser = useCallback((uid: string) => {
-    const su = sessionUnsubsRef.current.get(uid);
-    if (su) su();
-    sessionUnsubsRef.current.delete(uid);
-
-    const bu = breaksUnsubsRef.current.get(uid);
-    if (bu) bu();
-    breaksUnsubsRef.current.delete(uid);
-
-    sessionIdRef.current.delete(uid);
-
-    setLiveByUser(prev => {
-      if (!(uid in prev)) return prev;
-      const next = { ...prev };
-      delete next[uid];
-      return next;
-    });
-  }, []);
-
-  const cleanupAllLive = useCallback(() => {
-    for (const uid of Array.from(sessionUnsubsRef.current.keys())) cleanupLiveForUser(uid);
-  }, [cleanupLiveForUser]);
-
-  useEffect(() => {
-    if (!user || profile?.role !== "admin") {
-      cleanupAllLive();
-      return;
-    }
-
-    const todayStr = new Date().toISOString().split("T")[0];
-    const ids = new Set(users.map(u => u.id));
-
-    for (const uid of Array.from(sessionUnsubsRef.current.keys())) {
-      if (!ids.has(uid)) cleanupLiveForUser(uid);
-    }
-
-    users.forEach(u => {
-      if (sessionUnsubsRef.current.has(u.id)) return;
-
-      const sessionsQ = query(collection(db, "users", u.id, "sessions"), where("date", "==", todayStr));
-      const unsubSessions = onSnapshot(sessionsQ, snap => {
-        const all = snap.docs.map(d => ({ id: d.id, ...d.data() })) as WorkSession[];
-        const latest =
-          all.length <= 1
-            ? (all[0] ?? null)
-            : all.reduce((best, cur) => {
-                const bc = best?.createdAt?.toDate?.().getTime?.() ?? 0;
-                const cc = cur?.createdAt?.toDate?.().getTime?.() ?? 0;
-                return cc >= bc ? cur : best;
-              }, all[0]);
-
-        setLiveByUser(prev => ({
-          ...prev,
-          [u.id]: { session: latest, breaks: prev[u.id]?.breaks ?? [] },
-        }));
-
-        const nextSessionId = latest?.id ?? null;
-        const prevSessionId = sessionIdRef.current.get(u.id) ?? null;
-        if (nextSessionId === prevSessionId) return;
-
-        sessionIdRef.current.set(u.id, nextSessionId);
-
-        const prevBreaksUnsub = breaksUnsubsRef.current.get(u.id);
-        if (prevBreaksUnsub) prevBreaksUnsub();
-        breaksUnsubsRef.current.delete(u.id);
-
-        if (!nextSessionId) {
-          setLiveByUser(prev => ({
-            ...prev,
-            [u.id]: { session: prev[u.id]?.session ?? null, breaks: [] },
-          }));
-          return;
-        }
-
-        const breaksQ = query(
-          collection(db, "users", u.id, "sessions", nextSessionId, "breaks"),
-          orderBy("breakStart", "asc"),
-        );
-        const unsubBreaks = onSnapshot(breaksQ, bsnap => {
-          const br = bsnap.docs.map(d => ({ id: d.id, ...d.data() })) as BreakLog[];
-          setLiveByUser(prev => ({
-            ...prev,
-            [u.id]: { session: prev[u.id]?.session ?? null, breaks: br },
-          }));
-        });
-
-        breaksUnsubsRef.current.set(u.id, unsubBreaks);
-      });
-
-      sessionUnsubsRef.current.set(u.id, unsubSessions);
-    });
-  }, [users, user, profile?.role, cleanupAllLive, cleanupLiveForUser]);
-
-  useEffect(() => () => cleanupAllLive(), [cleanupAllLive]);
-
-  const viewUsers = users.map(u => {
-    const live = calcLiveTimes(liveByUser[u.id]?.session, liveByUser[u.id]?.breaks, nowMs);
-    if (!live) return u;
-    return { ...u, todayWorkTime: live.workSeconds, todayBreakTime: live.breakSeconds, currentStatus: live.status, isActive: live.isActive };
-  });
-
-  const filtered = viewUsers.filter(u =>
+  const filtered = users.filter(u =>
     u.fullName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
     u.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
     u.department?.toLowerCase().includes(searchQuery.toLowerCase())
@@ -477,19 +345,19 @@ const Admin = () => {
 
   // ── Derived data ───────────────────────────────────────────────────────────
 
-  const working  = viewUsers.filter(u=>u.currentStatus==="working").length;
-  const onBreak  = viewUsers.filter(u=>u.currentStatus==="break").length;
-  const offline  = viewUsers.filter(u=>u.currentStatus==="idle").length;
-  const avgFocus = viewUsers.length ? viewUsers.reduce((a,u)=>a+u.focusRate,0)/viewUsers.length : 0;
+  const working  = users.filter(u=>u.currentStatus==="working").length;
+  const onBreak  = users.filter(u=>u.currentStatus==="break").length;
+  const offline  = users.filter(u=>u.currentStatus==="idle").length;
+  const avgFocus = users.length ? users.reduce((a,u)=>a+u.focusRate,0)/users.length : 0;
   const totalCost= subscriptions.filter(s=>s.isActive).reduce((a,s)=>a+s.cost,0);
-  const avgWork  = viewUsers.length ? viewUsers.reduce((a,u)=>a+u.todayWorkTime,0)/viewUsers.length : 0;
+  const avgWork  = users.length ? users.reduce((a,u)=>a+u.todayWorkTime,0)/users.length : 0;
 
   const weeklyData = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"].map(day=>({
     day:day.slice(0,3),
-    ...Object.fromEntries(viewUsers.map(u=>[u.fullName||"Unknown",Math.round((u.weeklyWorkPattern[day]||0)/3600)])),
+    ...Object.fromEntries(users.map(u=>[u.fullName||"Unknown",Math.round((u.weeklyWorkPattern[day]||0)/3600)])),
   }));
 
-  const perfData = viewUsers.map(u=>({
+  const perfData = users.map(u=>({
     name:(u.fullName||"Unknown").split(" ")[0],
     fullName:u.fullName||"Unknown",
     "Work Hours":parseFloat(fmtHrs(u.monthWorkTime)),
@@ -511,10 +379,6 @@ const Admin = () => {
     {id:"subscriptions", label:"Subscriptions", icon:CreditCard},
   ] as const;
 
-  const selLive = selEmp ? calcLiveTimes(liveByUser[selEmp.id]?.session, liveByUser[selEmp.id]?.breaks, nowMs) : null;
-  const selTodayWork = selEmp ? (selLive?.workSeconds ?? selEmp.todayWorkTime) : 0;
-  const selTodayBreak = selEmp ? (selLive?.breakSeconds ?? selEmp.todayBreakTime) : 0;
-
   // ─────────────────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen" style={{background:"#07090f",fontFamily:"'DM Sans',sans-serif"}}>
@@ -534,10 +398,6 @@ const Admin = () => {
         {/* Top bar */}
         <div className="flex items-center justify-between mb-8">
           <div className="flex items-center gap-3.5">
-            {/* <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
-              style={{background:"linear-gradient(135deg,#6366f1,#8b5cf6)"}}>
-              <Zap className="w-4.5 h-4.5 text-white"/>
-            </div> */}
             <div>
               <h1 className="ph text-lg font-bold text-white leading-none">POG Admin</h1>
               <p className="text-[9px] text-white/20 mt-0.5">
@@ -563,7 +423,7 @@ const Admin = () => {
             <button key={id} onClick={()=>setSection(id as any)}
               className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium whitespace-nowrap transition-all border ${
                 section===id
-                  ? "border-indigo-500/30 text-indigo-300" 
+                  ? "border-indigo-500/30 text-indigo-300"
                   : "border-transparent text-white/30 hover:text-white/55 hover:bg-white/[0.025]"
               }`}
               style={section===id?{background:"rgba(99,102,241,0.13)"}:{}}>
@@ -749,8 +609,8 @@ const Admin = () => {
                       </div>
 
                       <div>
-                        <p className="text-xs font-medium text-white">{formatTimeShort(u.todayWorkTime)}</p>
-                        <p className="text-[9px] text-white/20">brk {formatTimeShort(u.todayBreakTime)}</p>
+                        <p className="text-xs font-medium text-white">{formatTime(u.todayWorkTime)}</p>
+                        <p className="text-[9px] text-white/20">brk {formatTime(u.todayBreakTime)}</p>
                       </div>
 
                       <div>
@@ -1069,9 +929,16 @@ const Admin = () => {
                 <p className="text-xs text-white/22">Loading performance data…</p>
               </div>
             ) : selEmp ? (
+              // ── 5 tabs now: Overview · Session History · Locations · Attendance · Goals
               <Tabs defaultValue="overview">
-                <TabsList className="pg rounded-xl p-1 mb-6 bg-transparent border-0 w-full grid grid-cols-4">
-                  {[["overview","Overview"],["history","Session History"],["locations","Locations"],["goals","Goals"]].map(([v,l])=>(
+                <TabsList className="pg rounded-xl p-1 mb-6 bg-transparent border-0 w-full grid grid-cols-5">
+                  {[
+                    ["overview",   "Overview"],
+                    ["history",    "Sessions"],
+                    ["locations",  "Locations"],
+                    ["attendance", "Attendance"],
+                    ["goals",      "Goals"],
+                  ].map(([v,l])=>(
                     <TabsTrigger key={v} value={v}
                       className="rounded-lg text-xs data-[state=active]:bg-indigo-600/75 data-[state=active]:text-white text-white/22 font-medium capitalize">
                       {l}
@@ -1079,12 +946,12 @@ const Admin = () => {
                   ))}
                 </TabsList>
 
-                {/* Overview */}
+                {/* ── Overview ── */}
                 <TabsContent value="overview" className="mt-0 space-y-4">
                   <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
                     {[
-                      {icon:Clock,    label:"Today Work",  val:formatTimeShort(selTodayWork),                c:"#818cf8"},
-                      {icon:Coffee,   label:"Today Break", val:formatTimeShort(selTodayBreak),               c:"#fbbf24"},
+                      {icon:Clock,    label:"Today Work",  val:formatTimeShort(selEmp.todayWorkTime),         c:"#818cf8"},
+                      {icon:Coffee,   label:"Today Break", val:formatTimeShort(selEmp.todayBreakTime),        c:"#fbbf24"},
                       {icon:Calendar, label:"Active Days", val:String(selEmp.totalSessionsThisMonth),        c:"#38bdf8"},
                       {icon:Activity, label:"Avg Daily",   val:formatTimeShort(selEmp.averageDailyWorkTime), c:"#34d399"},
                     ].map(m=>(
@@ -1174,7 +1041,7 @@ const Admin = () => {
                   )}
                 </TabsContent>
 
-                {/* Session History */}
+                {/* ── Session History ── */}
                 <TabsContent value="history" className="mt-0">
                   <div className="pg rounded-2xl overflow-hidden">
                     <div className="grid px-5 py-3 border-b border-white/[0.05] text-[8px] font-bold uppercase tracking-widest text-white/18"
@@ -1203,7 +1070,7 @@ const Admin = () => {
                   </div>
                 </TabsContent>
 
-                {/* Locations */}
+                {/* ── Locations ── */}
                 <TabsContent value="locations" className="mt-0">
                   <div className="pg rounded-2xl overflow-hidden">
                     <div className="px-5 py-4 border-b border-white/[0.055] flex items-center gap-3">
@@ -1219,7 +1086,15 @@ const Admin = () => {
                   </div>
                 </TabsContent>
 
-                {/* Goals */}
+                {/* ── Attendance Calendar ── */}
+                <TabsContent value="attendance" className="mt-0">
+                  <AttendanceCalendar
+                    userId={selEmp.id}
+                    employeeName={selEmp.fullName}
+                  />
+                </TabsContent>
+
+                {/* ── Goals ── */}
                 <TabsContent value="goals" className="mt-0">
                   <div className="pg rounded-2xl p-16 flex flex-col items-center text-center gap-3">
                     <div className="w-12 h-12 rounded-2xl flex items-center justify-center" style={{background:"rgba(255,255,255,0.04)"}}>
@@ -1229,6 +1104,7 @@ const Admin = () => {
                     <p className="text-xs text-white/15 max-w-xs">Set daily/weekly focus targets, track progress, and receive personalised recommendations.</p>
                   </div>
                 </TabsContent>
+
               </Tabs>
             ) : null}
           </div>
