@@ -16,7 +16,8 @@ import {
   serverTimestamp,
   Timestamp
 } from "firebase/firestore";
-import { auth, db } from "@/integrations/firebase/client";
+import { httpsCallable } from "firebase/functions";
+import { auth, db, functions } from "@/integrations/firebase/client";
 
 export interface Profile {
   id: string;
@@ -27,6 +28,7 @@ export interface Profile {
   avatarUrl?: string;
   teaPoints: number;
   role: "admin" | "user";
+  companyId: string;
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }
@@ -38,7 +40,15 @@ export const useAuth = () => {
 
   const fetchProfile = useCallback(async (userId: string) => {
     try {
-      const profileDoc = await getDoc(doc(db, "users", userId));
+      // First get user from global users collection to get companyId
+      const userDoc = await getDoc(doc(db, "users", userId));
+      if (!userDoc.exists()) return null;
+
+      const userData = userDoc.data();
+      const companyId = userData.companyId;
+
+      // Then get profile from company's employees
+      const profileDoc = await getDoc(doc(db, "companies", companyId, "employees", userId));
       if (profileDoc.exists()) {
         return profileDoc.data() as Profile;
       }
@@ -65,29 +75,13 @@ export const useAuth = () => {
     return () => unsubscribe();
   }, [fetchProfile]);
 
-  const signUp = async (email: string, password: string, fullName: string) => {
+  const signUp = async (email: string, password: string, fullName: string, companyName: string) => {
     try {
-      const userCredential: UserCredential = await createUserWithEmailAndPassword(auth, email, password);
+      const createUserFunction = httpsCallable(functions, 'createUserWithCompany');
+      const result = await createUserFunction({ email, password, fullName, companyName });
 
-      // Update display name
-      await firebaseUpdateProfile(userCredential.user, {
-        displayName: fullName,
-      });
-
-      // Create user profile in Firestore
-      const profileData: Profile = {
-        id: userCredential.user.uid,
-        userId: userCredential.user.uid,
-        fullName,
-        email,
-        designation: "Employee",
-        teaPoints: 0,
-        role: "user",
-        createdAt: serverTimestamp() as Timestamp,
-        updatedAt: serverTimestamp() as Timestamp,
-      };
-
-      await setDoc(doc(db, "users", userCredential.user.uid), profileData);
+      // Now sign in the user
+      const userCredential = await signInWithEmailAndPassword(auth, email, password);
 
       return { data: userCredential, error: null };
     } catch (error) {
@@ -116,7 +110,7 @@ export const useAuth = () => {
   };
 
   const updateProfile = async (updates: Partial<Profile>) => {
-    if (!user) return { error: new Error("No user logged in") };
+    if (!user || !profile) return { error: new Error("No user logged in") };
 
     try {
       const updateData: Partial<Profile> = {
@@ -124,13 +118,10 @@ export const useAuth = () => {
         updatedAt: serverTimestamp() as Timestamp,
       };
 
-      await updateDoc(doc(db, "users", user.uid), updateData);
+      await updateDoc(doc(db, "companies", profile.companyId, "employees", user.uid), updateData);
 
       // Update local state
-      const currentProfile = profile;
-      if (currentProfile) {
-        setProfile({ ...currentProfile, ...updates });
-      }
+      setProfile({ ...profile, ...updates });
 
       return { data: { ...profile, ...updates }, error: null };
     } catch (error) {

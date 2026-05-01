@@ -7,7 +7,7 @@ interface AuthContextType {
   session: null; // Firebase doesn't have sessions like Supabase
   profile: Profile | null;
   loading: boolean;
-  signUp: (email: string, password: string, fullName: string) => Promise<any>;
+  signUp: (email: string, password: string, fullName: string, companyName: string) => Promise<any>;
   signIn: (email: string, password: string) => Promise<any>;
   signOut: () => Promise<any>;
   updateProfile: (updates: Partial<Profile>) => Promise<any>;

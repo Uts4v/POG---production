@@ -90,9 +90,10 @@ const Profile = () => {
       const endDate = now;
 
       try {
-        const sessionsRef = collection(db, "users", user.uid, "sessions");
+        const sessionsRef = collection(db, "companies", profile.companyId, "sessions");
         const q = query(
           sessionsRef,
+          where("userId", "==", user.uid),
           where("date", ">=", startDate.toISOString().split("T")[0]),
           where("date", "<=", endDate.toISOString().split("T")[0]),
           orderBy("date", "desc")

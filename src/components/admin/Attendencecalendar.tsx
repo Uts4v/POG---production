@@ -6,7 +6,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { collection, getDocs, orderBy, query } from "firebase/firestore";
+import { collection, getDocs, orderBy, query, where } from "firebase/firestore";
 import { db } from "@/integrations/firebase/client";
 import { WorkSession } from "@/integrations/firebase/types";
 import {
@@ -61,6 +61,7 @@ interface DayData {
 interface Props {
   userId: string;
   employeeName?: string;
+  companyId: string;
 }
 
 /* ─── Status Config ───────────────────────────────────── */
@@ -74,7 +75,7 @@ const statusConfig: Record<string, { dot: string; text: string; bg: string; bord
 };
 
 /* ─── Component ───────────────────────────────────────── */
-export default function AttendanceCalendar({ userId, employeeName }: Props) {
+export default function AttendanceCalendar({ userId, employeeName, companyId }: Props) {
   const [sessions, setSessions] = useState<Map<string, WorkSession>>(new Map());
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -88,7 +89,7 @@ export default function AttendanceCalendar({ userId, employeeName }: Props) {
     else setLoading(true);
     setError(null);
     try {
-      const q = query(collection(db, "users", userId, "sessions"), orderBy("date", "asc"));
+      const q = query(collection(db, "companies", companyId, "sessions"), where("userId", "==", userId), orderBy("date", "asc"));
       const snap = await getDocs(q);
       const map = new Map<string, WorkSession>();
       snap.docs.forEach((d) => {

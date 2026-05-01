@@ -17,7 +17,7 @@ import type { WorkSession, BreakLog } from "@/integrations/firebase/types";
 import { Calendar, Clock, Coffee, ChevronDown, ChevronUp, Loader2 } from "lucide-react";
 
 const History = () => {
-  const { user, loading: authLoading } = useAuthContext();
+  const { user, profile, loading: authLoading } = useAuthContext();
   const navigate = useNavigate();
   const [sessions, setSessions] = useState<(WorkSession & { break_logs: BreakLog[] })[]>([]);
   const [loading, setLoading] = useState(true);
@@ -44,12 +44,13 @@ const History = () => {
 
   useEffect(() => {
     const fetchSessions = async () => {
-      if (!user) return;
+      if (!user || !profile) return;
 
       try {
-        const sessionsRef = collection(db, "users", user.uid, "sessions");
+        const sessionsRef = collection(db, "companies", profile.companyId, "sessions");
         const q = query(
           sessionsRef,
+          where("userId", "==", user.uid),
           orderBy("date", "desc"),
           limit(30)
         );
@@ -61,7 +62,7 @@ const History = () => {
           querySnapshot.docs.map(async (sessionDoc) => {
             const sessionData = { id: sessionDoc.id, ...sessionDoc.data() } as WorkSession;
 
-            const breaksRef = collection(db, "users", user.uid, "sessions", sessionDoc.id, "breaks");
+            const breaksRef = collection(db, "companies", profile.companyId, "sessions", sessionDoc.id, "breaks");
             const breaksQuery = query(breaksRef, orderBy("breakStart", "asc"));
             const breaksSnapshot = await getDocs(breaksQuery);
 
@@ -85,7 +86,7 @@ const History = () => {
     };
 
     fetchSessions();
-  }, [user]);
+  }, [user, profile]);
 
   if (authLoading || loading) {
     return (

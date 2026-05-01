@@ -106,3 +106,65 @@ exports.checkExpiringSubscriptions = functions.pubsub
 
     return null;
   });
+
+// Callable function for user signup with company creation
+exports.createUserWithCompany = functions.https.onCall(async (data, context) => {
+  // Check if user is authenticated (though for signup, might not be)
+  // For signup, we allow unauthenticated calls, but in production, add validation
+
+  const { email, password, fullName, companyName } = data;
+
+  if (!email || !password || !fullName || !companyName) {
+    throw new functions.https.HttpsError('invalid-argument', 'Missing required fields');
+  }
+
+  try {
+    // Create user with Firebase Auth
+    const userRecord = await admin.auth().createUser({
+      email,
+      displayName: fullName,
+      password,
+    });
+
+    // Create company
+    const companyRef = admin.firestore().collection('companies').doc();
+    const companyId = companyRef.id;
+
+    await companyRef.set({
+      name: companyName,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      adminUserId: userRecord.uid,
+    });
+
+    // Create user profile under company
+    await admin.firestore().collection('companies').doc(companyId).collection('employees').doc(userRecord.uid).set({
+      id: userRecord.uid,
+      userId: userRecord.uid,
+      fullName,
+      email,
+      designation: "Employee",
+      teaPoints: 0,
+      role: "admin", // First user is admin
+      companyId,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    // Also maintain a global users collection for lookup
+    await admin.firestore().collection('users').doc(userRecord.uid).set({
+      uid: userRecord.uid,
+      email,
+      companyId,
+      role: "admin",
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    // Set custom claim
+    await admin.auth().setCustomUserClaims(userRecord.uid, { companyId });
+
+    return { uid: userRecord.uid, companyId };
+  } catch (error) {
+    console.error('Error creating user with company:', error);
+    throw new functions.https.HttpsError('internal', 'Failed to create user');
+  }
+});

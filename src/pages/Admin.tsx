@@ -167,7 +167,7 @@ const Admin = () => {
 
   const fetchSessions = async (uid: string): Promise<WorkSession[]> => {
     try {
-      const q = query(collection(db,"users",uid,"sessions"),orderBy("createdAt","desc"),limit(50));
+      const q = query(collection(db, "companies", profile.companyId, "sessions"), where("userId", "==", uid), orderBy("createdAt","desc"),limit(50));
       return (await getDocs(q)).docs.map(d=>({id:d.id,...d.data()})) as WorkSession[];
     } catch { return []; }
   };
@@ -177,7 +177,8 @@ const Admin = () => {
       const now = new Date();
       const s = new Date(now); s.setDate(s.getDate()-60);
       const e = new Date(now); e.setDate(e.getDate()-30);
-      const q = query(collection(db,"users",uid,"sessions"),
+      const q = query(collection(db, "companies", profile.companyId, "sessions"),
+        where("userId", "==", uid),
         where("date",">=",s.toISOString().split("T")[0]),
         where("date","<=",e.toISOString().split("T")[0]),
         orderBy("date","desc"));
@@ -189,7 +190,7 @@ const Admin = () => {
   };
 
   const fetchUsers = useCallback(async () => {
-    if (!user || profile?.role!=="admin") { setLoading(false); return; }
+    if (!user || !profile || profile?.role!=="admin") { setLoading(false); return; }
     try {
       setLoading(true); setError(null);
       const today = new Date();
@@ -200,7 +201,7 @@ const Admin = () => {
       const ago7  = new Date(); ago7.setDate(ago7.getDate()-7);
       const ago7s  = ago7.toISOString().split("T")[0];
 
-      const uSnap = await getDocs(collection(db,"users"));
+      const uSnap = await getDocs(collection(db, "companies", profile.companyId, "employees"));
       if (uSnap.empty) { setUsers([]); setLoading(false); return; }
 
       const result = await Promise.all(uSnap.docs.map(async ud => {
@@ -212,7 +213,7 @@ const Admin = () => {
         let hist:WorkSession[]=[];
 
         try {
-          const sSnap = await getDocs(collection(db,"users",usr.id,"sessions"));
+          const sSnap = await getDocs(query(collection(db, "companies", profile.companyId, "sessions"), where("userId", "==", usr.id)));
           sSnap.docs.forEach(d => {
             const s = {id:d.id,...d.data()} as WorkSession;
             if (s.date===todayStr) {
@@ -1091,6 +1092,7 @@ const Admin = () => {
                   <AttendanceCalendar
                     userId={selEmp.id}
                     employeeName={selEmp.fullName}
+                    companyId={profile.companyId}
                   />
                 </TabsContent>
 

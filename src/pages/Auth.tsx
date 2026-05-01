@@ -15,6 +15,7 @@ const Auth = () => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
+  const [companyName, setCompanyName] = useState("");
   const { signIn, signUp } = useAuthContext();
   const navigate = useNavigate();
 
@@ -34,7 +35,12 @@ const Auth = () => {
           setLoading(false);
           return;
         }
-        const { error } = await signUp(email, password, fullName);
+        if (!companyName.trim()) {
+          toast.error("Please enter your company name");
+          setLoading(false);
+          return;
+        }
+        const { error } = await signUp(email, password, fullName, companyName);
         if (error) throw error;
         toast.success("Account created! Welcome to TeaTime");
         navigate("/");
@@ -169,6 +175,33 @@ const Auth = () => {
                     </div>
                   </motion.div>
                 )}
+
+                <AnimatePresence mode="wait">
+                  {!isLogin && (
+                    <motion.div
+                      key="companyName"
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: "auto" }}
+                      exit={{ opacity: 0, height: 0 }}
+                      transition={{ duration: 0.2 }}
+                    >
+                      <Label htmlFor="companyName" className="text-foreground">
+                        Company Name
+                      </Label>
+                      <div className="relative mt-1.5">
+                        <Coffee className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                        <Input
+                          id="companyName"
+                          type="text"
+                          placeholder="Your company name"
+                          value={companyName}
+                          onChange={(e) => setCompanyName(e.target.value)}
+                          className="pl-10"
+                        />
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </AnimatePresence>
 
               <div>

@@ -22,7 +22,7 @@ import { toast } from "sonner";
 import { useLocationCapture } from "@/hooks/useLocation";  // new hook for geolocation
 
 export const useWorkSession = () => {
-  const { user } = useAuthContext();
+  const { user, profile } = useAuthContext();
   const [session, setSession] = useState<WorkSession | null>(null);
   const [breakLogs, setBreakLogs] = useState<BreakLog[]>([]);
   const [displayTime, setDisplayTime] = useState(0);
@@ -63,15 +63,15 @@ export const useWorkSession = () => {
 
   // Fetch today's session
   const fetchTodaySession = useCallback(async () => {
-    if (!user) {
+    if (!user || !profile) {
       setLoading(false);
       return;
     }
 
     try {
       // Query for today's session
-      const sessionsRef = collection(db, "users", user.uid, "sessions");
-      const q = query(sessionsRef, where("date", "==", today));
+      const sessionsRef = collection(db, "companies", profile.companyId, "sessions");
+      const q = query(sessionsRef, where("date", "==", today), where("userId", "==", user.uid));
       const querySnapshot = await getDocs(q);
 
       if (!querySnapshot.empty) {
@@ -80,7 +80,7 @@ export const useWorkSession = () => {
         setSession(sessionData);
 
         // Fetch break logs for this session
-        const breaksRef = collection(db, "users", user.uid, "sessions", sessionDoc.id, "breaks");
+        const breaksRef = collection(db, "companies", profile.companyId, "sessions", sessionDoc.id, "breaks");
         const breaksQuery = query(breaksRef, orderBy("breakStart", "asc"));
         const breaksSnapshot = await getDocs(breaksQuery);
 
@@ -98,7 +98,7 @@ export const useWorkSession = () => {
       console.error("Error fetching session:", error);
     }
     setLoading(false);
-  }, [user, today]);
+  }, [user, profile, today]);
 
   useEffect(() => {
     fetchTodaySession();
@@ -172,7 +172,7 @@ export const useWorkSession = () => {
   const { captureLocation } = useLocationCapture();
 
   const clockIn = async () => {
-    if (!user) return;
+    if (!user || !profile) return;
 
     try {
       // try to get location data; if it fails we block the clock-in and show a toast
@@ -213,11 +213,11 @@ export const useWorkSession = () => {
         };
         if (locationData) updatePayload.clockInLocation = locationData;
 
-        await updateDoc(doc(db, "users", user.uid, "sessions", session.id), updatePayload);
+        await updateDoc(doc(db, "companies", profile.companyId, "sessions", session.id), updatePayload);
         setSession({ ...session, workStartTime: Timestamp.now(), status: "working", workEndTime: null, ...(locationData ? { clockInLocation: locationData } : {}) });
       } else {
         // Create new session
-        const docRef = await addDoc(collection(db, "users", user.uid, "sessions"), sessionData);
+        const docRef = await addDoc(collection(db, "companies", profile.companyId, "sessions"), sessionData);
         setSession({ id: docRef.id, ...sessionData } as WorkSession);
       }
 
@@ -229,7 +229,7 @@ export const useWorkSession = () => {
   };
 
   const clockOut = async () => {
-    if (!session || !user) return;
+    if (!session || !user || !profile) return;
 
     try {
       const times = calculateElapsedTime();
@@ -238,13 +238,13 @@ export const useWorkSession = () => {
       const currentBreak = breakLogs.find((log) => log.breakEnd === undefined);
       if (currentBreak) {
         await updateDoc(
-          doc(db, "users", user.uid, "sessions", session.id, "breaks", currentBreak.id),
+          doc(db, "companies", profile.companyId, "sessions", session.id, "breaks", currentBreak.id),
           { breakEnd: Timestamp.now() }
         );
       }
 
       // Update session
-      await updateDoc(doc(db, "users", user.uid, "sessions", session.id), {
+      await updateDoc(doc(db, "companies", profile.companyId, "sessions", session.id), {
         workEndTime: Timestamp.now(),
         totalWorkDuration: times.work,
         totalBreakDuration: times.break,
@@ -255,7 +255,7 @@ export const useWorkSession = () => {
       // Update tea points in profile
       const teaPointsEarned = Math.floor(times.work / 3600) * 10;
       if (teaPointsEarned > 0) {
-        const profileRef = doc(db, "users", user.uid);
+        const profileRef = doc(db, "companies", profile.companyId, "employees", user.uid);
         const profileSnap = await getDoc(profileRef);
         if (profileSnap.exists()) {
           const currentPoints = profileSnap.data().teaPoints || 0;
@@ -283,7 +283,7 @@ export const useWorkSession = () => {
   };
 
   const pauseWork = async () => {
-    if (!session || !user) return;
+    if (!session || !user || !profile) return;
 
     try {
       const breakData = {
@@ -294,11 +294,11 @@ export const useWorkSession = () => {
       };
 
       const docRef = await addDoc(
-        collection(db, "users", user.uid, "sessions", session.id, "breaks"),
+        collection(db, "companies", profile.companyId, "sessions", session.id, "breaks"),
         breakData
       );
 
-      await updateDoc(doc(db, "users", user.uid, "sessions", session.id), {
+      await updateDoc(doc(db, "companies", profile.companyId, "sessions", session.id), {
         status: "break",
         updatedAt: Timestamp.now(),
       });
@@ -312,13 +312,13 @@ export const useWorkSession = () => {
   };
 
   const resumeWork = async () => {
-    if (!session || !user) return;
+    if (!session || !user || !profile) return;
 
     try {
       const currentBreak = breakLogs.find((log) => log.breakEnd === undefined);
       if (currentBreak) {
         await updateDoc(
-          doc(db, "users", user.uid, "sessions", session.id, "breaks", currentBreak.id),
+          doc(db, "companies", profile.companyId, "sessions", session.id, "breaks", currentBreak.id),
           { breakEnd: Timestamp.now() }
         );
 
@@ -342,7 +342,7 @@ export const useWorkSession = () => {
           return acc;
         }, 0);
 
-        await updateDoc(doc(db, "users", user.uid, "sessions", session.id), {
+        await updateDoc(doc(db, "companies", profile.companyId, "sessions", session.id), {
           status: "working",
           totalBreakDuration: totalBreak,
           updatedAt: Timestamp.now(),
