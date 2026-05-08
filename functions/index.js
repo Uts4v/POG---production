@@ -107,27 +107,34 @@ exports.checkExpiringSubscriptions = functions.pubsub
     return null;
   });
 
-// Callable function for user signup with company creation
-exports.createUserWithCompany = functions.https.onCall(async (data, context) => {
-  // Check if user is authenticated (though for signup, might not be)
-  // For signup, we allow unauthenticated calls, but in production, add validation
+// HTTP function for user signup with company creation
+exports.createUserWithCompany = functions.https.onRequest(async (req, res) => {
+  res.set("Access-Control-Allow-Origin", "*");
+  res.set("Access-Control-Allow-Methods", "OPTIONS, POST");
+  res.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
 
-  const { email, password, fullName, companyName } = data;
+  if (req.method === "OPTIONS") {
+    return res.status(204).send("");
+  }
+
+  if (req.method !== "POST") {
+    return res.status(405).send({ error: "Method not allowed" });
+  }
+
+  const { email, password, fullName, companyName } = req.body;
 
   if (!email || !password || !fullName || !companyName) {
-    throw new functions.https.HttpsError('invalid-argument', 'Missing required fields');
+    return res.status(400).send({ error: "Missing required fields" });
   }
 
   try {
-    // Create user with Firebase Auth
     const userRecord = await admin.auth().createUser({
       email,
       displayName: fullName,
       password,
     });
 
-    // Create company
-    const companyRef = admin.firestore().collection('companies').doc();
+    const companyRef = admin.firestore().collection("companies").doc();
     const companyId = companyRef.id;
 
     await companyRef.set({
@@ -136,22 +143,20 @@ exports.createUserWithCompany = functions.https.onCall(async (data, context) => 
       adminUserId: userRecord.uid,
     });
 
-    // Create user profile under company
-    await admin.firestore().collection('companies').doc(companyId).collection('employees').doc(userRecord.uid).set({
+    await admin.firestore().collection("companies").doc(companyId).collection("employees").doc(userRecord.uid).set({
       id: userRecord.uid,
       userId: userRecord.uid,
       fullName,
       email,
       designation: "Employee",
       teaPoints: 0,
-      role: "admin", // First user is admin
+      role: "admin",
       companyId,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
 
-    // Also maintain a global users collection for lookup
-    await admin.firestore().collection('users').doc(userRecord.uid).set({
+    await admin.firestore().collection("users").doc(userRecord.uid).set({
       uid: userRecord.uid,
       email,
       companyId,
@@ -159,12 +164,11 @@ exports.createUserWithCompany = functions.https.onCall(async (data, context) => 
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
 
-    // Set custom claim
     await admin.auth().setCustomUserClaims(userRecord.uid, { companyId });
 
-    return { uid: userRecord.uid, companyId };
+    return res.status(200).send({ uid: userRecord.uid, companyId });
   } catch (error) {
-    console.error('Error creating user with company:', error);
-    throw new functions.https.HttpsError('internal', 'Failed to create user');
+    console.error("Error creating user with company:", error);
+    return res.status(500).send({ error: "Failed to create user" });
   }
 });

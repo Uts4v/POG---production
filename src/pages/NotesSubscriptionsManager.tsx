@@ -88,12 +88,16 @@ export default function NotesSubscriptionsManager() {
     try {
       // Fetch users (if admin)
       if (profile?.role === "admin") {
-        const usersSnapshot = await getDocs(collection(db, "users"));
-        setUsers(usersSnapshot.docs.map(doc => ({
-          id: doc.id,
-          fullName: doc.data().fullName,
-          email: doc.data().email
-        })));
+        const employeesSnapshot = await getDocs(
+          collection(db, "companies", profile.companyId, "employees")
+        );
+        setUsers(
+          employeesSnapshot.docs.map((doc) => ({
+            id: doc.id,
+            fullName: doc.data().fullName,
+            email: doc.data().email,
+          }))
+        );
       }
 
       // Fetch announcements/notes

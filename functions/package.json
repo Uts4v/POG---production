@@ -5,7 +5,7 @@
   "type": "commonjs",
   "main": "index.js",
   "engines": {
-    "node": "22"
+    "node": "18"
   },
   "scripts": {
     "lint": "eslint index.js",
@@ -16,10 +16,11 @@
     "logs": "firebase functions:log"
   },
   "dependencies": {
-    "firebase-admin": "^13.6.0",
-    "firebase-functions": "^7.0.0",
+    "cors": "^2.8.6",
+    "firebase-admin": "^10.1.0",
+    "firebase-functions": "^4.9.0",
     "moment-timezone": "^0.6.0",
-    "node-telegram-bot-api": "^0.63.0"
+    "node-telegram-bot-api": "^0.67.0"
   },
   "devDependencies": {
     "@eslint/js": "^8.57.1",

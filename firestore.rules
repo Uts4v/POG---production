@@ -1,9 +1,158 @@
 rules_version = '2';
-
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /{document=**} {
-      allow read, write: if false;
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function userDoc(uid) {
+      return get(/databases/$(database)/documents/users/$(uid));
+    }
+
+    function isUserAdmin() {
+      return isSignedIn()
+        && userDoc(request.auth.uid).exists()
+        && userDoc(request.auth.uid).data.role == "admin";
+    }
+
+    function canAccessCompany(companyId) {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/companies/$(companyId)/employees/$(request.auth.uid));
+    }
+
+    function isCompanyAdmin(companyId) {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/companies/$(companyId)/employees/$(request.auth.uid))
+        && get(/databases/$(database)/documents/companies/$(companyId)/employees/$(request.auth.uid)).data.role == "admin";
+    }
+
+    match /users/{userId} {
+      allow create: if isSignedIn()
+        && request.auth.uid == userId
+        && request.resource.data.uid == request.auth.uid;
+
+      // Users can always read/update their own doc. Admins can manage users in their company.
+      allow read: if isSignedIn()
+        && (request.auth.uid == userId ||
+            (isUserAdmin() && canAccessCompany(resource.data.companyId)));
+
+      allow update, delete: if isSignedIn()
+        && (request.auth.uid == userId ||
+            (isUserAdmin() && canAccessCompany(resource.data.companyId)));
+    }
+
+    match /companies/{companyId} {
+      allow create: if isSignedIn();
+      allow read: if isSignedIn();
+      allow update, delete: if canAccessCompany(companyId);
+
+      match /employees/{employeeId} {
+        allow create: if isSignedIn() && request.auth.uid == employeeId;
+        allow read: if isSignedIn() && (request.auth.uid == employeeId || canAccessCompany(companyId));
+        allow update, delete: if isSignedIn() && (request.auth.uid == employeeId || canAccessCompany(companyId));
+      }
+
+      match /sessions/{sessionId} {
+        function isSessionOwner() {
+          return isSignedIn() && resource.data.userId == request.auth.uid;
+        }
+
+        // Members can read/write their own session docs. Admins can manage all sessions in their company.
+        allow read: if canAccessCompany(companyId) && (isSessionOwner() || isCompanyAdmin(companyId));
+        allow create: if canAccessCompany(companyId) && request.resource.data.userId == request.auth.uid;
+        allow update, delete: if canAccessCompany(companyId) && (isSessionOwner() || isCompanyAdmin(companyId));
+
+        match /breaks/{breakId} {
+          function isBreakOwner() {
+            return isSignedIn() && resource.data.userId == request.auth.uid;
+          }
+
+          allow read: if canAccessCompany(companyId) && (isBreakOwner() || isCompanyAdmin(companyId));
+          allow create: if canAccessCompany(companyId) && request.resource.data.userId == request.auth.uid;
+          allow update, delete: if canAccessCompany(companyId) && (isBreakOwner() || isCompanyAdmin(companyId));
+        }
+      }
+
+      match /companyInvites/{inviteCode} {
+        allow read: if true;
+        allow create: if isSignedIn() && request.resource.data.adminUserId == request.auth.uid;
+        allow delete: if isSignedIn() && resource.data.adminUserId == request.auth.uid;
+      }
+
+      match /{document=**} {
+        allow read, write: if canAccessCompany(companyId);
+      }
+    }
+
+    match /companyInvites/{inviteCode} {
+      allow read: if true;
+      allow create: if isSignedIn() && request.resource.data.adminUserId == request.auth.uid;
+      allow delete: if isSignedIn() && resource.data.adminUserId == request.auth.uid;
+    }
+
+    // Global Sessions Collection for Analytics
+    match /sessions/{sessionId} {
+      allow create: if isSignedIn()
+        && request.resource.data.userId == request.auth.uid
+        && canAccessCompany(request.resource.data.companyId);
+
+      // NOTE: for queries, keep this rule simple/derivable from query constraints.
+      // Admin analytics should use `/companies/{companyId}/sessions`.
+      allow read, update, delete: if isSignedIn() && request.auth.uid == resource.data.userId;
+
+      match /breaks/{breakId} {
+        function isOwnerBreak() {
+          return isSignedIn() && request.auth.uid == resource.data.userId;
+        }
+
+        // Backward-compatible: older break docs may be missing `sessionId`.
+        function breakMatchesSession() {
+          return !resource.data.keys().hasAny(["sessionId"]) || resource.data.sessionId == sessionId;
+        }
+
+        allow read: if isOwnerBreak() && breakMatchesSession();
+
+        allow create: if isSignedIn()
+          && request.resource.data.userId == request.auth.uid
+          && request.resource.data.sessionId == sessionId;
+
+        allow update: if isSignedIn()
+          && isOwnerBreak()
+          && breakMatchesSession()
+          && request.resource.data.userId == resource.data.userId
+          && request.resource.data.sessionId == resource.data.sessionId;
+
+        allow delete: if isOwnerBreak() && breakMatchesSession();
+      }
+    }
+
+    match /notes/{noteId} {
+      allow read: if isSignedIn()
+        && (resource.data.recipientId == request.auth.uid || resource.data.recipientId == "all");
+
+      // Admin-only note creation (used for announcements + subscription reminders).
+      allow create: if isSignedIn()
+        && isUserAdmin()
+        && request.resource.data.senderId == request.auth.uid;
+
+      // Recipients can mark their own notes as read (only touch isRead/updatedAt).
+      allow update: if isSignedIn()
+        && request.auth.uid == resource.data.recipientId
+        && request.resource.data.diff(resource.data).changedKeys().hasOnly(["isRead","updatedAt"]);
+
+      allow delete: if isSignedIn() && isUserAdmin();
+    }
+
+    match /personalNotes/{noteId} {
+      allow read: if isSignedIn() && request.auth.uid == resource.data.userId;
+      allow create: if isSignedIn() && request.auth.uid == request.resource.data.userId;
+      allow update, delete: if isSignedIn() && request.auth.uid == resource.data.userId;
+    }
+
+    match /subscriptions/{subscriptionId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && isUserAdmin();
     }
   }
 }

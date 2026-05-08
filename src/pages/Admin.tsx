@@ -33,7 +33,7 @@ import {
   Map as MapIcon,
 } from "lucide-react";
 import { Navigate } from "react-router-dom";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis,
@@ -90,6 +90,8 @@ interface Subscription {
 const CHART_COLORS = ["#818cf8","#34d399","#fbbf24","#f87171","#a78bfa","#38bdf8","#fb923c","#4ade80"];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+const dateKeyLocal = (d: Date) => d.toLocaleDateString("en-CA"); // YYYY-MM-DD in local timezone
 
 function formatTime(s: number) {
   if (!s || s < 0) s = 0;
@@ -156,6 +158,7 @@ const Admin = () => {
   const [selEmp,        setSelEmp]        = useState<UserWithStats|null>(null);
   const [empOpen,       setEmpOpen]       = useState(false);
   const [empLoading,    setEmpLoading]    = useState(false);
+  const liveUnsubRef = useRef<null | (() => void)>(null);
 
   const filtered = users.filter(u =>
     u.fullName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -167,9 +170,18 @@ const Admin = () => {
 
   const fetchSessions = async (uid: string): Promise<WorkSession[]> => {
     try {
-      const q = query(collection(db, "companies", profile.companyId, "sessions"), where("userId", "==", uid), orderBy("createdAt","desc"),limit(50));
+      const q = query(
+        collection(db, "companies", profile.companyId, "sessions"),
+        where("userId", "==", uid),
+        orderBy("date","desc"),
+        limit(200)
+      );
       return (await getDocs(q)).docs.map(d=>({id:d.id,...d.data()})) as WorkSession[];
-    } catch { return []; }
+    } catch (e) {
+      console.error("[Admin] Failed to fetch employee sessions:", { uid }, e);
+      toast.error("Unable to load employee sessions (check Firestore rules/indexes).");
+      return [];
+    }
   };
 
   const fetchPrev = async (uid: string) => {
@@ -179,8 +191,8 @@ const Admin = () => {
       const e = new Date(now); e.setDate(e.getDate()-30);
       const q = query(collection(db, "companies", profile.companyId, "sessions"),
         where("userId", "==", uid),
-        where("date",">=",s.toISOString().split("T")[0]),
-        where("date","<=",e.toISOString().split("T")[0]),
+        where("date",">=",dateKeyLocal(s)),
+        where("date","<=",dateKeyLocal(e)),
         orderBy("date","desc"));
       const rows = (await getDocs(q)).docs.map(d=>d.data());
       const w = rows.reduce((a,r)=>a+(r.totalWorkDuration||0),0);
@@ -189,20 +201,95 @@ const Admin = () => {
     } catch { return {focusRate:0,workHours:0}; }
   };
 
+  const attachLiveTodayListener = useCallback(() => {
+    if (!user || !profile || profile.role !== "admin") return;
+
+    const todayStr = dateKeyLocal(new Date());
+    const q = query(
+      collection(db, "companies", profile.companyId, "sessions"),
+      where("date", "==", todayStr),
+      limit(500),
+    );
+
+    liveUnsubRef.current?.();
+    liveUnsubRef.current = onSnapshot(
+      q,
+      (snap) => {
+        const byUser = new Map<string, { status: string; active: boolean; tw: number; tb: number }>();
+
+        snap.docs.forEach((d) => {
+          const s = d.data() as any;
+          const uid = s.userId as string | undefined;
+          if (!uid) return;
+          const prev = byUser.get(uid) ?? { status: "idle", active: false, tw: 0, tb: 0 };
+          prev.tw += s.totalWorkDuration || 0;
+          prev.tb += s.totalBreakDuration || 0;
+          if (s.status === "working" || s.status === "break") {
+            prev.status = s.status;
+            prev.active = true;
+          }
+          byUser.set(uid, prev);
+        });
+
+        setUsers((prev) =>
+          prev.map((u) => {
+            const t = byUser.get(u.id);
+            if (!t) return { ...u, todayWorkTime: 0, todayBreakTime: 0, currentStatus: "idle", isActive: false };
+            return { ...u, todayWorkTime: t.tw, todayBreakTime: t.tb, currentStatus: t.status, isActive: t.active };
+          }),
+        );
+
+        setSelEmp((prev) => {
+          if (!prev) return prev;
+          const t = byUser.get(prev.id);
+          if (!t) return { ...prev, todayWorkTime: 0, todayBreakTime: 0, currentStatus: "idle", isActive: false };
+          return { ...prev, todayWorkTime: t.tw, todayBreakTime: t.tb, currentStatus: t.status, isActive: t.active };
+        });
+      },
+      (err) => console.error("[Admin] Live listener error:", err),
+    );
+  }, [user, profile]);
+
   const fetchUsers = useCallback(async () => {
     if (!user || !profile || profile?.role!=="admin") { setLoading(false); return; }
     try {
       setLoading(true); setError(null);
       const today = new Date();
-      const todayStr = today.toISOString().split("T")[0];
+      const todayStr = dateKeyLocal(today);
       const cm = today.getMonth(), cy = today.getFullYear();
       const ago30 = new Date(); ago30.setDate(ago30.getDate()-30);
-      const ago30s = ago30.toISOString().split("T")[0];
+      const ago30s = dateKeyLocal(ago30);
       const ago7  = new Date(); ago7.setDate(ago7.getDate()-7);
-      const ago7s  = ago7.toISOString().split("T")[0];
+      const ago7s  = dateKeyLocal(ago7);
+      const monthStartStr = dateKeyLocal(new Date(today.getFullYear(), today.getMonth(), 1));
 
       const uSnap = await getDocs(collection(db, "companies", profile.companyId, "employees"));
       if (uSnap.empty) { setUsers([]); setLoading(false); return; }
+
+      // Pull today's statuses in one query (more reliable + fewer indexes required)
+      let todayStatusByUser = new Map<string, { status: string; active: boolean; tw: number; tb: number }>();
+      try {
+        const todaySnap = await getDocs(query(
+          collection(db, "companies", profile.companyId, "sessions"),
+          where("date", "==", todayStr),
+          limit(500),
+        ));
+        todaySnap.docs.forEach((d) => {
+          const s = d.data() as any;
+          const uid = s.userId as string | undefined;
+          if (!uid) return;
+          const prev = todayStatusByUser.get(uid) ?? { status: "idle", active: false, tw: 0, tb: 0 };
+          prev.tw += s.totalWorkDuration || 0;
+          prev.tb += s.totalBreakDuration || 0;
+          if (s.status === "working" || s.status === "break") {
+            prev.status = s.status;
+            prev.active = true;
+          }
+          todayStatusByUser.set(uid, prev);
+        });
+      } catch (e) {
+        console.error("[Admin] Failed to fetch today's sessions:", e);
+      }
 
       const result = await Promise.all(uSnap.docs.map(async ud => {
         const usr = {id:ud.id,...ud.data()} as Profile;
@@ -213,25 +300,61 @@ const Admin = () => {
         let hist:WorkSession[]=[];
 
         try {
-          const sSnap = await getDocs(query(collection(db, "companies", profile.companyId, "sessions"), where("userId", "==", usr.id)));
-          sSnap.docs.forEach(d => {
+          const [statsSnap, monthSnap, locSnap] = await Promise.all([
+            getDocs(query(
+              collection(db, "companies", profile.companyId, "sessions"),
+              where("userId", "==", usr.id),
+              where("date", ">=", ago30s),
+              orderBy("date", "desc"),
+              limit(300),
+            )),
+            getDocs(query(
+              collection(db, "companies", profile.companyId, "sessions"),
+              where("userId", "==", usr.id),
+              where("date", ">=", monthStartStr),
+              orderBy("date", "desc"),
+              limit(500),
+            )),
+            getDocs(query(
+              collection(db, "companies", profile.companyId, "sessions"),
+              where("userId", "==", usr.id),
+              where("date", ">=", ago7s),
+              orderBy("date", "desc"),
+              limit(50),
+            )),
+          ]);
+
+          statsSnap.docs.forEach(d => {
             const s = {id:d.id,...d.data()} as WorkSession;
-            if (s.date===todayStr) {
-              tw+=s.totalWorkDuration||0; tb+=s.totalBreakDuration||0;
-              if (s.status==="working"||s.status==="break"){st=s.status;active=true;}
-            }
-            const sd=new Date(s.date);
-            if (sd.getMonth()===cm && sd.getFullYear()===cy){mw+=s.totalWorkDuration||0;mb+=s.totalBreakDuration||0;ms++;}
             if (s.date>=ago30s) {
               l30w+=s.totalWorkDuration||0; l30b+=s.totalBreakDuration||0; l30s++;
+              const sd=new Date(s.date);
               const dn=sd.toLocaleDateString("en-US",{weekday:"long"});
               wk[dn]=(wk[dn]||0)+(s.totalWorkDuration||0);
               if (!dm.has(s.date)) dm.set(s.date,{workTime:0,breakTime:0});
               const dd=dm.get(s.date)!; dd.workTime+=s.totalWorkDuration||0; dd.breakTime+=s.totalBreakDuration||0;
             }
-            if (s.date>=ago7s && s.clockInLocation) hist.push(s);
           });
-        } catch {}
+
+          monthSnap.docs.forEach(d => {
+            const s = d.data() as any;
+            mw+=s.totalWorkDuration||0; mb+=s.totalBreakDuration||0; ms++;
+          });
+
+          hist = locSnap.docs
+            .map(d => ({id:d.id,...d.data()} as WorkSession))
+            .filter(s => !!s.clockInLocation);
+        } catch (e) {
+          console.error("[Admin] Failed to fetch analytics for user:", usr.id, e);
+        }
+
+        const todayStats = todayStatusByUser.get(usr.id);
+        if (todayStats) {
+          tw = todayStats.tw;
+          tb = todayStats.tb;
+          st = todayStats.status;
+          active = todayStats.active;
+        }
 
         const t30=l30w+l30b;
         return {
@@ -263,9 +386,19 @@ const Admin = () => {
   useEffect(()=>{ if(!authLoading&&profile?.role==="admin") fetchUsers(); },[authLoading,profile,fetchUsers]);
   useEffect(()=>{
     if(!authLoading&&profile?.role==="admin"){
-      const iv=setInterval(fetchUsers,30000); return ()=>clearInterval(iv);
+      // Live status comes from a Firestore listener; keep analytics refresh low-frequency.
+      const iv=setInterval(fetchUsers,5*60*1000); return ()=>clearInterval(iv);
     }
   },[authLoading,profile,fetchUsers]);
+
+  useEffect(() => {
+    if (authLoading || profile?.role !== "admin") return;
+    attachLiveTodayListener();
+    return () => {
+      liveUnsubRef.current?.();
+      liveUnsubRef.current = null;
+    };
+  }, [authLoading, profile, attachLiveTodayListener]);
 
   const openEmp = async (emp: UserWithStats) => {
     setEmpLoading(true); setSelEmp(emp); setEmpOpen(true);
@@ -352,6 +485,23 @@ const Admin = () => {
   const avgFocus = users.length ? users.reduce((a,u)=>a+u.focusRate,0)/users.length : 0;
   const totalCost= subscriptions.filter(s=>s.isActive).reduce((a,s)=>a+s.cost,0);
   const avgWork  = users.length ? users.reduce((a,u)=>a+u.todayWorkTime,0)/users.length : 0;
+
+  const recentLocationSessions = users
+    .flatMap((u) =>
+      (u.sessionHistory ?? [])
+        .filter((s) => !!s.clockInLocation)
+        .map((s) => ({
+          employeeName: u.fullName || u.email || "Employee",
+          employeeEmail: u.email || "",
+          session: s,
+        }))
+    )
+    .sort((a, b) => {
+      const at = a.session.createdAt?.toDate?.()?.getTime?.() ?? 0;
+      const bt = b.session.createdAt?.toDate?.()?.getTime?.() ?? 0;
+      return bt - at;
+    })
+    .slice(0, 50);
 
   const weeklyData = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"].map(day=>({
     day:day.slice(0,3),
@@ -791,6 +941,66 @@ const Admin = () => {
                   <AllEmployeesLocationsMap users={users}/>
                 </div>
               </div>
+
+              <div className="pg rounded-2xl overflow-hidden mt-5">
+                <div className="flex items-center gap-3 px-5 py-4 border-b border-white/[0.055]">
+                  <div className="w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0" style={{background:"rgba(56,189,248,0.10)"}}>
+                    <Activity className="w-4 h-4 text-sky-300"/>
+                  </div>
+                  <div>
+                    <h3 className="ph text-sm font-semibold text-white">Recent Clock-ins</h3>
+                    <p className="text-[9px] text-white/20 mt-0.5">Latest 50 location captures (last 7 days)</p>
+                  </div>
+                </div>
+
+                {recentLocationSessions.length === 0 ? (
+                  <div className="p-10 text-center">
+                    <p className="text-xs text-white/18">No recent location data found.</p>
+                  </div>
+                ) : (
+                  <div className="max-h-[520px] overflow-y-auto">
+                    <div
+                      className="grid px-5 py-3 border-b border-white/[0.05] text-[8px] font-bold uppercase tracking-widest text-white/18"
+                      style={{ gridTemplateColumns: "1.3fr 1fr 0.9fr 2.2fr 0.7fr" }}
+                    >
+                      {["Employee", "Date", "Time", "Location", "Status"].map((h) => (
+                        <div key={h}>{h}</div>
+                      ))}
+                    </div>
+
+                    {recentLocationSessions.map(({ employeeName, employeeEmail, session }) => {
+                      const created = session.createdAt?.toDate?.();
+                      const time = created
+                        ? created.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                        : "—";
+                      const loc = session.clockInLocation?.label || "—";
+                      const status = session.status || "idle";
+                      const sc = statusCfg(status as any);
+
+                      return (
+                        <div
+                          key={`${employeeEmail || employeeName}-${session.id}`}
+                          className="pr grid px-5 py-3 border-b border-white/[0.035] last:border-0 items-start transition-colors"
+                          style={{ gridTemplateColumns: "1.3fr 1fr 0.9fr 2.2fr 0.7fr" }}
+                        >
+                          <div className="min-w-0">
+                            <p className="text-[10px] font-semibold text-white/70 truncate">{employeeName}</p>
+                            {employeeEmail ? (
+                              <p className="text-[9px] text-white/22 truncate">{employeeEmail}</p>
+                            ) : null}
+                          </div>
+                          <p className="text-[10px] text-white/35">{new Date(session.date).toLocaleDateString()}</p>
+                          <p className="text-[10px] text-white/35">{time}</p>
+                          <p className="text-[10px] text-white/35 truncate" title={loc}>{loc}</p>
+                          <span className="text-[9px] font-semibold px-2 py-0.5 rounded-lg self-start" style={{background:sc.bg,color:sc.tx}}>
+                            {sc.label}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             </motion.div>
           )}
 
@@ -896,6 +1106,10 @@ const Admin = () => {
       {/* ══════════════ EMPLOYEE MODAL ══════════════ */}
       <Dialog open={empOpen} onOpenChange={setEmpOpen}>
         <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto p-0 border border-white/10 rounded-3xl" style={{background:"#0a0c14"}}>
+          <DialogHeader className="sr-only">
+            <DialogTitle>Employee Details</DialogTitle>
+            <DialogDescription>Employee session history, locations, attendance, and performance analytics.</DialogDescription>
+          </DialogHeader>
 
           {/* Sticky header */}
           <div className="sticky top-0 z-10 border-b border-white/[0.065] px-6 py-4 flex items-center justify-between"

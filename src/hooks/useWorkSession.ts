@@ -59,19 +59,26 @@ export const useWorkSession = () => {
     }
   }, []);
 
-  const today = new Date().toISOString().split("T")[0];
+  const today = new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD format in local timezone
 
   // Fetch today's session
   const fetchTodaySession = useCallback(async () => {
     if (!user || !profile) {
+      console.warn("fetchTodaySession skipped because user or profile is missing", { user, profile });
       setLoading(false);
       return;
     }
 
     try {
       // Query for today's session
+      // Use company-scoped sessions for reads (admin panel also uses this path).
+      // This avoids relying on the global `sessions` rules for reads.
       const sessionsRef = collection(db, "companies", profile.companyId, "sessions");
-      const q = query(sessionsRef, where("date", "==", today), where("userId", "==", user.uid));
+      const q = query(
+        sessionsRef,
+        where("date", "==", today),
+        where("userId", "==", user.uid)
+      );
       const querySnapshot = await getDocs(q);
 
       if (!querySnapshot.empty) {
@@ -79,17 +86,22 @@ export const useWorkSession = () => {
         const sessionData = { id: sessionDoc.id, ...sessionDoc.data() } as WorkSession;
         setSession(sessionData);
 
-        // Fetch break logs for this session
-        const breaksRef = collection(db, "companies", profile.companyId, "sessions", sessionDoc.id, "breaks");
-        const breaksQuery = query(breaksRef, orderBy("breakStart", "asc"));
-        const breaksSnapshot = await getDocs(breaksQuery);
+        // Break logs live under the company-scoped session
+        try {
+          const breaksRef = collection(db, "companies", profile.companyId, "sessions", sessionDoc.id, "breaks");
+          const breaksQuery = query(breaksRef, orderBy("breakStart", "asc"));
+          const breaksSnapshot = await getDocs(breaksQuery);
 
-        const breaks = breaksSnapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        })) as BreakLog[];
+          const breaks = breaksSnapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+          })) as BreakLog[];
 
-        setBreakLogs(breaks);
+          setBreakLogs(breaks);
+        } catch (breakErr) {
+          console.error("Error fetching break logs:", breakErr);
+          setBreakLogs([]);
+        }
       } else {
         setSession(null);
         setBreakLogs([]);
@@ -172,20 +184,28 @@ export const useWorkSession = () => {
   const { captureLocation } = useLocationCapture();
 
   const clockIn = async () => {
-    if (!user || !profile) return;
+    if (!user) {
+      toast.error("Please sign in before clocking in.");
+      return;
+    }
+
+    if (!profile) {
+      toast.error("Your profile has not loaded yet. Please wait a moment and try again.");
+      console.warn("clockIn aborted because profile is missing", { user });
+      return;
+    }
 
     try {
-      // try to get location data; if it fails we block the clock-in and show a toast
+      // Try to get location data; if it fails, continue without it
       let locationData;
       try {
         console.log("Attempting to capture location...");
         locationData = await captureLocation();
         console.log("Location captured successfully:", locationData);
       } catch (locErr: any) {
-        // permission denied or other error; surface to user
-        console.error("Location capture failed:", locErr);
-        toast.error(locErr?.message || "Failed to capture location. Clock-in blocked.");
-        throw locErr;
+        // Location capture failed, but don't block clock-in
+        console.warn("Location capture failed, continuing without location:", locErr?.message);
+        toast.warning("Location not available. Clocking in without location data.");
       }
 
       const sessionData: Partial<WorkSession> = {
@@ -214,22 +234,41 @@ export const useWorkSession = () => {
         if (locationData) updatePayload.clockInLocation = locationData;
 
         await updateDoc(doc(db, "companies", profile.companyId, "sessions", session.id), updatePayload);
+        await updateDoc(doc(db, "sessions", session.id), updatePayload);
         setSession({ ...session, workStartTime: Timestamp.now(), status: "working", workEndTime: null, ...(locationData ? { clockInLocation: locationData } : {}) });
       } else {
         // Create new session
+        const sessionDataWithCompany = {
+          ...sessionData,
+          companyId: profile.companyId,
+        };
+
         const docRef = await addDoc(collection(db, "companies", profile.companyId, "sessions"), sessionData);
+        await setDoc(doc(db, "sessions", docRef.id), sessionDataWithCompany);
         setSession({ id: docRef.id, ...sessionData } as WorkSession);
       }
 
       setBreakLogs([]);
+      toast.success("Successfully clocked in!");
     } catch (error) {
       console.error("Error clocking in:", error);
-      // error may already have been shown via toast
+      toast.error("Failed to clock in. Please try again.");
     }
   };
 
   const clockOut = async () => {
-    if (!session || !user || !profile) return;
+    if (!session) {
+      toast.error("No active session to clock out from.");
+      return;
+    }
+    if (!user) {
+      toast.error("Please sign in before clocking out.");
+      return;
+    }
+    if (!profile) {
+      toast.error("Your profile has not loaded yet. Please wait a moment and try again.");
+      return;
+    }
 
     try {
       const times = calculateElapsedTime();
@@ -237,14 +276,26 @@ export const useWorkSession = () => {
       // End any current break first
       const currentBreak = breakLogs.find((log) => log.breakEnd === undefined);
       if (currentBreak) {
-        await updateDoc(
-          doc(db, "companies", profile.companyId, "sessions", session.id, "breaks", currentBreak.id),
-          { breakEnd: Timestamp.now() }
-        );
+        try {
+          await updateDoc(
+            doc(db, "companies", profile.companyId, "sessions", session.id, "breaks", currentBreak.id),
+            { breakEnd: Timestamp.now() }
+          );
+        } catch (breakUpdateErr) {
+          console.error("Error ending current break (continuing clock-out):", breakUpdateErr);
+        }
       }
 
       // Update session
       await updateDoc(doc(db, "companies", profile.companyId, "sessions", session.id), {
+        workEndTime: Timestamp.now(),
+        totalWorkDuration: times.work,
+        totalBreakDuration: times.break,
+        status: "completed",
+        updatedAt: Timestamp.now(),
+      });
+
+      await updateDoc(doc(db, "sessions", session.id), {
         workEndTime: Timestamp.now(),
         totalWorkDuration: times.work,
         totalBreakDuration: times.break,
@@ -283,7 +334,18 @@ export const useWorkSession = () => {
   };
 
   const pauseWork = async () => {
-    if (!session || !user || !profile) return;
+    if (!session) {
+      toast.error("No active session to pause.");
+      return;
+    }
+    if (!user) {
+      toast.error("Please sign in before taking a break.");
+      return;
+    }
+    if (!profile) {
+      toast.error("Your profile has not loaded yet. Please wait a moment and try again.");
+      return;
+    }
 
     try {
       const breakData = {
@@ -303,6 +365,11 @@ export const useWorkSession = () => {
         updatedAt: Timestamp.now(),
       });
 
+      await updateDoc(doc(db, "sessions", session.id), {
+        status: "break",
+        updatedAt: Timestamp.now(),
+      });
+
       const newBreak = { id: docRef.id, ...breakData };
       setBreakLogs([...breakLogs, newBreak]);
       setSession({ ...session, status: "break" });
@@ -312,7 +379,18 @@ export const useWorkSession = () => {
   };
 
   const resumeWork = async () => {
-    if (!session || !user || !profile) return;
+    if (!session) {
+      toast.error("No session available to resume.");
+      return;
+    }
+    if (!user) {
+      toast.error("Please sign in before resuming work.");
+      return;
+    }
+    if (!profile) {
+      toast.error("Your profile has not loaded yet. Please wait a moment and try again.");
+      return;
+    }
 
     try {
       const currentBreak = breakLogs.find((log) => log.breakEnd === undefined);
@@ -348,6 +426,12 @@ export const useWorkSession = () => {
           updatedAt: Timestamp.now(),
         });
 
+        await updateDoc(doc(db, "sessions", session.id), {
+          status: "working",
+          totalBreakDuration: totalBreak,
+          updatedAt: Timestamp.now(),
+        });
+
         setSession({ ...session, status: "working", totalBreakDuration: totalBreak });
         stopBreakAlert();
         setIsBreakAlertPlaying(false);
@@ -358,7 +442,10 @@ export const useWorkSession = () => {
   };
 
   const resetSession = async () => {
-    if (!user) return;
+    if (!user) {
+      toast.error("Please sign in before resetting your session.");
+      return;
+    }
 
     try {
       // If there's an active session that isn't completed, end it first so the record is preserved.

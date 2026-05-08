@@ -36,8 +36,8 @@ export const useSubscriptionChecker = () => {
 
             if (shouldNotify) {
               await addDoc(collection(db, "notes"), {
-                senderId: "system",
-                senderName: "System",
+                senderId: user.uid,
+                senderName: profile.fullName || "Admin",
                 recipientId: "all",
                 recipientName: "All Employees",
                 subject: `Subscription Deadline Approaching: ${sub.name}`,

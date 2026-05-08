@@ -47,10 +47,11 @@ const History = () => {
       if (!user || !profile) return;
 
       try {
-        const sessionsRef = collection(db, "companies", profile.companyId, "sessions");
+        const sessionsRef = collection(db, "sessions");
         const q = query(
           sessionsRef,
           where("userId", "==", user.uid),
+          where("companyId", "==", profile.companyId),
           orderBy("date", "desc"),
           limit(30)
         );

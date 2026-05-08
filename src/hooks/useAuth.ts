@@ -14,10 +14,11 @@ import {
   setDoc,
   updateDoc,
   serverTimestamp,
-  Timestamp
+  Timestamp,
+  collection,
+  getDocs
 } from "firebase/firestore";
-import { httpsCallable } from "firebase/functions";
-import { auth, db, functions } from "@/integrations/firebase/client";
+import { auth, db } from "@/integrations/firebase/client";
 
 export interface Profile {
   id: string;
@@ -33,30 +34,60 @@ export interface Profile {
   updatedAt: Timestamp;
 }
 
+type SignUpParams = {
+  email: string;
+  password: string;
+  fullName: string;
+  companyName?: string;
+  inviteCode?: string;
+};
+
 export const useAuth = () => {
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const fetchProfile = useCallback(async (userId: string) => {
-    try {
-      // First get user from global users collection to get companyId
-      const userDoc = await getDoc(doc(db, "users", userId));
-      if (!userDoc.exists()) return null;
+  const fetchProfile = useCallback(async (userId: string, retries = 3) => {
+    for (let attempt = 0; attempt < retries; attempt++) {
+      try {
+        // First try to get user from global users collection to get companyId
+        const userDoc = await getDoc(doc(db, "users", userId));
+        if (userDoc.exists()) {
+          const userData = userDoc.data();
+          const companyId = userData.companyId;
+          if (companyId) {
+            // Then get profile from company's employees
+            const profileDoc = await getDoc(doc(db, "companies", companyId, "employees", userId));
+            if (profileDoc.exists()) {
+              return profileDoc.data() as Profile;
+            }
+          }
+        }
 
-      const userData = userDoc.data();
-      const companyId = userData.companyId;
+        // If user document doesn't exist or companyId is missing, try to find profile across all companies
+        console.warn("User doc missing or invalid, searching across companies", { userId });
+        const companiesRef = collection(db, "companies");
+        const companiesSnapshot = await getDocs(companiesRef);
 
-      // Then get profile from company's employees
-      const profileDoc = await getDoc(doc(db, "companies", companyId, "employees", userId));
-      if (profileDoc.exists()) {
-        return profileDoc.data() as Profile;
+        for (const companyDoc of companiesSnapshot.docs) {
+          const profileDoc = await getDoc(doc(db, "companies", companyDoc.id, "employees", userId));
+          if (profileDoc.exists()) {
+            return profileDoc.data() as Profile;
+          }
+        }
+
+        console.warn("Profile not found for user", { userId });
+        return null;
+      } catch (error) {
+        if (attempt < retries - 1) {
+          console.warn(`Error fetching profile (attempt ${attempt + 1}/${retries}), retrying...`, error);
+          await new Promise(resolve => setTimeout(resolve, 500));
+        } else {
+          console.error("Error fetching profile after all retries:", error);
+        }
       }
-      return null;
-    } catch (error) {
-      console.error("Error fetching profile:", error);
-      return null;
     }
+    return null;
   }, []);
 
   useEffect(() => {
@@ -64,8 +95,15 @@ export const useAuth = () => {
       setUser(firebaseUser);
 
       if (firebaseUser) {
-        const profile = await fetchProfile(firebaseUser.uid);
-        setProfile(profile);
+        // If we already have a profile for this user, don't fetch again
+        // This prevents issues with Firestore eventual consistency after signup
+        if (profile && profile.userId === firebaseUser.uid) {
+          setLoading(false);
+          return;
+        }
+
+        const fetchedProfile = await fetchProfile(firebaseUser.uid);
+        setProfile(fetchedProfile);
       } else {
         setProfile(null);
       }
@@ -73,19 +111,166 @@ export const useAuth = () => {
     });
 
     return () => unsubscribe();
-  }, [fetchProfile]);
+  }, [fetchProfile, profile]);
 
-  const signUp = async (email: string, password: string, fullName: string, companyName: string) => {
+  const signUp = async ({
+    email,
+    password,
+    fullName,
+    companyName,
+    inviteCode,
+  }: SignUpParams) => {
     try {
-      const createUserFunction = httpsCallable(functions, 'createUserWithCompany');
-      const result = await createUserFunction({ email, password, fullName, companyName });
+      let userCredential: UserCredential;
+      let isExistingUser = false;
 
-      // Now sign in the user
-      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      try {
+        // Try to create a new user
+        userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      } catch (createError: any) {
+        // If email already exists, try to sign in instead
+        if (createError.code === 'auth/email-already-in-use') {
+          try {
+            userCredential = await signInWithEmailAndPassword(auth, email, password);
+            isExistingUser = true;
+          } catch (signInError: any) {
+            throw new Error("This email is already registered with a different password. Please sign in instead or reset your password.");
+          }
+        } else {
+          throw createError;
+        }
+      }
 
-      return { data: userCredential, error: null };
+      const user = userCredential.user;
+
+      // Ensure the user is authenticated before proceeding with Firestore operations
+      if (!auth.currentUser) {
+        throw new Error("Authentication failed. Please try again.");
+      }
+
+      // Small delay to ensure auth state is propagated
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      // Check if user already has a profile
+      const existingProfileDoc = await getDoc(doc(db, "companies", "dummy", "employees", user.uid));
+      let hasExistingProfile = false;
+
+      // Try to find the user's profile across all companies
+      const companiesRef = collection(db, "companies");
+      const companiesSnapshot = await getDocs(companiesRef);
+
+      for (const companyDoc of companiesSnapshot.docs) {
+        const profileDoc = await getDoc(doc(db, "companies", companyDoc.id, "employees", user.uid));
+        if (profileDoc.exists()) {
+          hasExistingProfile = true;
+          break;
+        }
+      }
+
+      if (hasExistingProfile && !isExistingUser) {
+        throw new Error("You are already registered. Please sign in instead.");
+      }
+
+      // Update display name if it's a new user or if it was empty
+      if (!isExistingUser || !user.displayName) {
+        await firebaseUpdateProfile(user, { displayName: fullName });
+      }
+
+      let companyId: string;
+      let inviteRecord: { companyId: string } | null = null;
+
+      if (inviteCode) {
+        try {
+          const inviteDoc = await getDoc(doc(db, "companyInvites", inviteCode.toUpperCase()));
+          if (!inviteDoc.exists()) {
+            throw new Error("Invalid company invite code.");
+          }
+
+          inviteRecord = inviteDoc.data() as { companyId: string };
+          companyId = inviteRecord.companyId;
+
+          const existingCompany = await getDoc(doc(db, "companies", companyId));
+          if (!existingCompany.exists()) {
+            throw new Error("The invited company does not exist.");
+          }
+        } catch (inviteError: any) {
+          if (inviteError.code === 'permission-denied') {
+            throw new Error("Unable to verify invite code. Please check your connection and try again.");
+          }
+          throw inviteError;
+        }
+      } else {
+        const companyRef = doc(db, "companies", crypto.randomUUID());
+        companyId = companyRef.id;
+        const generatedInviteCode = crypto.randomUUID().slice(0, 6).toUpperCase();
+
+        try {
+          await setDoc(companyRef, {
+            name: companyName,
+            createdAt: serverTimestamp(),
+            adminUserId: user.uid,
+            inviteCode: generatedInviteCode,
+          });
+          console.log("Company doc created successfully", { companyId });
+        } catch (companyError) {
+          console.error("Failed to create company doc:", companyError);
+          throw companyError;
+        }
+
+        try {
+          await setDoc(doc(db, "companyInvites", generatedInviteCode), {
+            companyId,
+            adminUserId: user.uid,
+            createdAt: serverTimestamp(),
+          });
+          console.log("Company invite created successfully", { generatedInviteCode, companyId });
+        } catch (inviteError) {
+          console.error("Failed to create company invite doc:", inviteError);
+          throw inviteError;
+        }
+      }
+
+      try {
+        await setDoc(doc(db, "users", user.uid), {
+          uid: user.uid,
+          email,
+          companyId,
+          role: inviteCode ? "user" : "admin",
+          createdAt: serverTimestamp(),
+        });
+        console.log("User doc created successfully", { uid: user.uid, companyId });
+      } catch (userError) {
+        console.error("Failed to create user doc:", userError);
+        throw userError;
+      }
+
+      const employeeProfile: Profile = {
+        id: user.uid,
+        userId: user.uid,
+        fullName,
+        email,
+        designation: "Employee",
+        teaPoints: 0,
+        role: inviteCode ? "user" : "admin",
+        companyId,
+        createdAt: Timestamp.now(),
+        updatedAt: Timestamp.now(),
+      };
+
+      try {
+        await setDoc(doc(db, "companies", companyId, "employees", user.uid), employeeProfile);
+        console.log("Employee profile doc created successfully", { uid: user.uid, companyId });
+      } catch (employeeError) {
+        console.error("Failed to create employee profile doc:", employeeError);
+        throw employeeError;
+      }
+
+      setProfile(employeeProfile);
+
+      return { data: userCredential, profile: employeeProfile, error: null };
     } catch (error) {
-      return { data: null, error };
+      console.error("Sign up failed:", error);
+      return { data: null, profile: null, error };
     }
   };
 
@@ -139,5 +324,6 @@ export const useAuth = () => {
     signOut,
     updateProfile,
     refetchProfile: () => user && fetchProfile(user.uid).then(setProfile),
+    setProfile: (p: Profile | null) => setProfile(p),
   };
 };

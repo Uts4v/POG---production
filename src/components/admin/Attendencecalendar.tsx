@@ -89,7 +89,11 @@ export default function AttendanceCalendar({ userId, employeeName, companyId }: 
     else setLoading(true);
     setError(null);
     try {
-      const q = query(collection(db, "companies", companyId, "sessions"), where("userId", "==", userId), orderBy("date", "asc"));
+      const q = query(
+        collection(db, "companies", companyId, "sessions"),
+        where("userId", "==", userId),
+        orderBy("date", "asc")
+      );
       const snap = await getDocs(q);
       const map = new Map<string, WorkSession>();
       snap.docs.forEach((d) => {
@@ -103,7 +107,7 @@ export default function AttendanceCalendar({ userId, employeeName, companyId }: 
     }
     setLoading(false);
     setRefreshing(false);
-  }, [userId]);
+  }, [userId, companyId]);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
