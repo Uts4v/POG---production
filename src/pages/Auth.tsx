@@ -1,13 +1,13 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate } from "react-router-dom";
-import { TeaLeafIcon } from "@/components/ui/TeaLeafIcon";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAuthContext } from "@/contexts/AuthContext";
 import { toast } from "sonner";
-import { Loader2, Mail, Lock, User, ArrowRight, Coffee, BarChart2, Award, Leaf } from "lucide-react";
+import { Loader2, Mail, Lock, User, ArrowRight, Coffee } from "lucide-react";
+import authHeroImage from "@/img/ChatGPT Image Apr 28, 2026, 02_01_10 PM.png";
 
 const Auth = () => {
   const [isLogin, setIsLogin] = useState(true);
@@ -70,11 +70,12 @@ const Auth = () => {
           navigate("/");
         }
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const err = error as { code?: string; message?: string } | null | undefined;
       const errMessage =
-        error?.code === "auth/email-already-in-use"
+        err?.code === "auth/email-already-in-use"
           ? "This email is already registered. Please sign in or use a different email."
-          : error?.message || "An error occurred";
+          : err?.message || "An error occurred";
       toast.error(errMessage);
     } finally {
       setLoading(false);
@@ -83,71 +84,25 @@ const Auth = () => {
 
   return (
     <div className="min-h-screen bg-background flex">
-      {/* Left side - Branding */}
-      <div className="hidden lg:flex lg:w-1/2 bg-gradient-to-br from-primary to-tea-forest relative overflow-hidden">
-        {/* Decorative elements */}
-        <div className="absolute inset-0 opacity-10">
-          {[...Array(6)].map((_, i) => (
-            <motion.div
-              key={i}
-              className="absolute text-white"
-              style={{
-                top: `${Math.random() * 100}%`,
-                left: `${Math.random() * 100}%`,
-                width: `${40 + Math.random() * 60}px`,
-                height: `${40 + Math.random() * 60}px`,
-              }}
-              animate={{
-                y: [0, -20, 0],
-                rotate: [0, 10, -10, 0],
-              }}
-              transition={{
-                duration: 5 + Math.random() * 3,
-                repeat: Infinity,
-                delay: Math.random() * 2,
-              }}
-            >
-              <TeaLeafIcon />
-            </motion.div>
-          ))}
-        </div>
-
-        <div className="relative z-10 flex flex-col justify-center px-12 text-white">
-          <motion.div
-            initial={{ opacity: 0, x: -30 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ duration: 0.6 }}
-          >
-            <div className="flex items-center gap-4 mb-8">
-              <div className="w-16 h-16">
-                <img src="/img/danfe.png" alt="TeaTime logo" className="w-16 h-16 object-contain" />
-              </div>
-              <div>
-                <h1 className="font-display text-4xl font-semibold">TeaTime</h1>
-                <p className="text-white/80">Tracker</p>
-              </div>
-            </div>
-
-            <h2 className="font-display text-3xl font-semibold mb-4">
-              Brew Your Best Work
-            </h2>
-            <p className="text-white/80 text-lg max-w-md leading-relaxed">
-              Track your productivity, manage breaks mindfully, and earn Tea Points
-              for focused work. Join Nepal Tea Exchange's journey to mindful productivity.
-            </p>
-
-            <div className="mt-12 space-y-4">
-              <Feature icon={<Leaf className="w-5 h-5 text-white/90" />} text="Track work hours effortlessly" />
-              <Feature icon={<Coffee className="w-5 h-5 text-white/90" />} text="Smart break management" />
-              <Feature icon={<BarChart2 className="w-5 h-5 text-white/90" />} text="Daily Grind Cards" />
-              <Feature icon={<Award className="w-5 h-5 text-white/90" />} text="Earn Tea Points" />
-            </div>
-          </motion.div>
-        </div>
+      {/* Left side - Image */}
+      <div className="hidden lg:flex lg:w-1/2 border-r border-border/60 bg-muted/20">
+        <motion.div
+          initial={{ opacity: 0, x: -20 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ duration: 0.4 }}
+          className="w-full h-full"
+        >
+          <img
+            src={authHeroImage}
+            alt="Productivity dashboard preview"
+            className="w-full h-full object-cover"
+            loading="lazy"
+          />
+        </motion.div>
       </div>
 
       {/* Right side - Auth form */}
-      <div className="flex-1 flex items-center justify-center p-8">
+      <div className="flex-1 flex items-center justify-center p-8 sm:p-12">
         <motion.div
           className="w-full max-w-md"
           initial={{ opacity: 0, y: 20 }}
@@ -166,7 +121,16 @@ const Auth = () => {
             </div>
           </div>
 
-          <div className="tea-card p-8">
+          <div className="lg:hidden mb-6">
+            <img
+              src={authHeroImage}
+              alt="Productivity dashboard preview"
+              className="w-full h-40 object-cover rounded-2xl border border-border/60 bg-card shadow-sm"
+              loading="lazy"
+            />
+          </div>
+
+          <div className="rounded-2xl border border-border/60 bg-card/60 p-8 shadow-sm backdrop-blur">
             <div className="text-center mb-8">
               <h2 className="font-display text-2xl font-semibold text-foreground">
                 {isLogin ? "Welcome Back" : "Create Account"}
@@ -337,12 +301,5 @@ const Auth = () => {
     </div>
   );
 };
-
-const Feature = ({ icon, text }: { icon: React.ReactNode; text: string }) => (
-  <div className="flex items-center gap-3 text-white/90">
-    <div className="w-6 h-6 flex items-center justify-center">{icon}</div>
-    <span>{text}</span>
-  </div>
-);
 
 export default Auth;

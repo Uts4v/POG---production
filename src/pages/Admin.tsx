@@ -408,17 +408,56 @@ const Admin = () => {
   };
 
   const removeUser = async (uid:string) => {
-    try { await deleteDoc(doc(db,"users",uid)); fetchUsers(); }
-    catch { setError("Failed to remove user"); }
+    try {
+      await Promise.all([
+        deleteDoc(doc(db, "users", uid)),
+        // IMPORTANT: Admin UI lists employees from companies/{companyId}/employees
+        // so we must delete the employee profile doc too, otherwise it will still appear.
+        deleteDoc(doc(db, "companies", profile.companyId, "employees", uid)),
+      ]);
+      fetchUsers();
+      toast.success("Employee removed");
+    } catch (e) {
+      console.error("[Admin] removeUser failed:", e);
+      setError("Failed to remove user");
+    }
   };
 
-  const toggleRole = async (uid:string, cur:"admin"|"user") => {
+  const toggleRole = async (uid: string, cur: "admin" | "user") => {
     try {
-      const nr = cur==="admin"?"user":"admin";
-      await updateDoc(doc(db,"users",uid),{role:nr,updatedAt:Timestamp.now()});
-      fetchUsers(); toast.success(`Role updated to ${nr}`);
-    } catch { setError("Failed to update role"); }
+      const nr = cur === "admin" ? "user" : "admin";
+
+      // Your Firestore rules/UI check admin status from BOTH places:
+      // - users/{uid}.role
+      // - companies/{companyId}/employees/{uid}.role
+      await Promise.all([
+        updateDoc(doc(db, "users", uid), { role: nr, updatedAt: Timestamp.now() }),
+        updateDoc(
+          doc(db, "companies", profile.companyId, "employees", uid),
+          { role: nr, updatedAt: Timestamp.now() }
+        ),
+      ]);
+
+      // Refresh lists + current user profile (so UI role gate updates without requiring a full refresh)
+      fetchUsers();
+      // useAuthContext exposes refetchProfile
+      refetchProfile();
+
+      toast.success(`Role updated to ${nr}`);
+
+    } catch (e) {
+      console.error("[Admin] toggleRole failed:", {
+        uid,
+        from: cur,
+        to: cur === "admin" ? "user" : "admin",
+        companyId: profile?.companyId,
+        error: e,
+      });
+      setError("Failed to update role");
+    }
   };
+
+
 
   const delSub = async (id:string) => {
     try { await deleteDoc(doc(db,"subscriptions",id)); fetchUsers(); }

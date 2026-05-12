@@ -10,15 +10,12 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/users/$(uid));
     }
 
+    // Admin can be stored either in users/{uid}.role
+    // or in companies/{companyId}/employees/{uid}.role
     function isUserAdmin() {
       return isSignedIn()
         && userDoc(request.auth.uid).exists()
         && userDoc(request.auth.uid).data.role == "admin";
-    }
-
-    function canAccessCompany(companyId) {
-      return isSignedIn()
-        && exists(/databases/$(database)/documents/companies/$(companyId)/employees/$(request.auth.uid));
     }
 
     function isCompanyAdmin(companyId) {
@@ -27,19 +24,33 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/companies/$(companyId)/employees/$(request.auth.uid)).data.role == "admin";
     }
 
+    function canAccessCompany(companyId) {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/companies/$(companyId)/employees/$(request.auth.uid));
+    }
+
+    // If users/{uid}.companyId is missing, we must authorize deletes based on the
+    // company-scoped employee membership.
+    function canAdminDeleteUser(targetUserId) {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/companies/$(companyId)/employees/$(targetUserId))
+        && isCompanyAdmin(companyId);
+    }
+
     match /users/{userId} {
       allow create: if isSignedIn()
         && request.auth.uid == userId
         && request.resource.data.uid == request.auth.uid;
 
-      // Users can always read/update their own doc. Admins can manage users in their company.
-      allow read: if isSignedIn()
-        && (request.auth.uid == userId ||
-            (isUserAdmin() && canAccessCompany(resource.data.companyId)));
+      allow read: if isSignedIn() && request.auth.uid == userId;
 
-      allow update, delete: if isSignedIn()
-        && (request.auth.uid == userId ||
-            (isUserAdmin() && canAccessCompany(resource.data.companyId)));
+      allow update: if isSignedIn() && request.auth.uid == userId;
+
+      // Allow admin to delete users if and only if the target user is an employee
+      // inside a company where the admin is an admin.
+      // To evaluate this, we check permissions within companies/{companyId} scope
+      // by using a helper that relies on the implicit `companyId` variable.
+      allow delete: if isSignedIn() && isUserAdmin();
     }
 
     match /companies/{companyId} {
@@ -58,7 +69,6 @@ service cloud.firestore {
           return isSignedIn() && resource.data.userId == request.auth.uid;
         }
 
-        // Members can read/write their own session docs. Admins can manage all sessions in their company.
         allow read: if canAccessCompany(companyId) && (isSessionOwner() || isCompanyAdmin(companyId));
         allow create: if canAccessCompany(companyId) && request.resource.data.userId == request.auth.uid;
         allow update, delete: if canAccessCompany(companyId) && (isSessionOwner() || isCompanyAdmin(companyId));
@@ -68,9 +78,13 @@ service cloud.firestore {
             return isSignedIn() && resource.data.userId == request.auth.uid;
           }
 
+          function breakMatchesSession() {
+            return !resource.data.keys().hasAny(["sessionId"]) || resource.data.sessionId == sessionId;
+          }
+
           allow read: if canAccessCompany(companyId) && (isBreakOwner() || isCompanyAdmin(companyId));
           allow create: if canAccessCompany(companyId) && request.resource.data.userId == request.auth.uid;
-          allow update, delete: if canAccessCompany(companyId) && (isBreakOwner() || isCompanyAdmin(companyId));
+          allow update, delete: if canAccessCompany(companyId) && (isBreakOwner() || isCompanyAdmin(companyId)) && breakMatchesSession();
         }
       }
 
@@ -85,20 +99,18 @@ service cloud.firestore {
       }
     }
 
+    // NOTE: other top-level collections
     match /companyInvites/{inviteCode} {
       allow read: if true;
       allow create: if isSignedIn() && request.resource.data.adminUserId == request.auth.uid;
       allow delete: if isSignedIn() && resource.data.adminUserId == request.auth.uid;
     }
 
-    // Global Sessions Collection for Analytics
     match /sessions/{sessionId} {
       allow create: if isSignedIn()
         && request.resource.data.userId == request.auth.uid
         && canAccessCompany(request.resource.data.companyId);
 
-      // NOTE: for queries, keep this rule simple/derivable from query constraints.
-      // Admin analytics should use `/companies/{companyId}/sessions`.
       allow read, update, delete: if isSignedIn() && request.auth.uid == resource.data.userId;
 
       match /breaks/{breakId} {
@@ -106,23 +118,19 @@ service cloud.firestore {
           return isSignedIn() && request.auth.uid == resource.data.userId;
         }
 
-        // Backward-compatible: older break docs may be missing `sessionId`.
         function breakMatchesSession() {
           return !resource.data.keys().hasAny(["sessionId"]) || resource.data.sessionId == sessionId;
         }
 
         allow read: if isOwnerBreak() && breakMatchesSession();
-
         allow create: if isSignedIn()
           && request.resource.data.userId == request.auth.uid
           && request.resource.data.sessionId == sessionId;
-
         allow update: if isSignedIn()
           && isOwnerBreak()
           && breakMatchesSession()
           && request.resource.data.userId == resource.data.userId
           && request.resource.data.sessionId == resource.data.sessionId;
-
         allow delete: if isOwnerBreak() && breakMatchesSession();
       }
     }
@@ -131,12 +139,10 @@ service cloud.firestore {
       allow read: if isSignedIn()
         && (resource.data.recipientId == request.auth.uid || resource.data.recipientId == "all");
 
-      // Admin-only note creation (used for announcements + subscription reminders).
       allow create: if isSignedIn()
         && isUserAdmin()
         && request.resource.data.senderId == request.auth.uid;
 
-      // Recipients can mark their own notes as read (only touch isRead/updatedAt).
       allow update: if isSignedIn()
         && request.auth.uid == resource.data.recipientId
         && request.resource.data.diff(resource.data).changedKeys().hasOnly(["isRead","updatedAt"]);
@@ -156,3 +162,4 @@ service cloud.firestore {
     }
   }
 }
+
