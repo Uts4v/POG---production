@@ -20,10 +20,14 @@ exports.checkExpiringSubscriptions = functions.pubsub
     console.log("Starting daily subscription expiration check...");
 
     try {
-      const botToken = process.env.BOT_TOKEN || "8208644784:AAHMUPJ3-AUr6wetb3MavhDDHE7HJ3tRaiE";
-      const chatId = process.env.CHAT_ID || "-1003873673042";
+      const botToken =
+        (functions.config()?.telegram && functions.config().telegram.token) ||
+        process.env.BOT_TOKEN;
+      const chatId =
+        (functions.config()?.telegram && functions.config().telegram.chat_id) ||
+        process.env.CHAT_ID;
       if (!botToken || !chatId) {
-        console.error("Missing BOT_TOKEN or CHAT_ID env vars for Cloud Function.");
+        console.error("Missing Telegram config. Set functions config `telegram.token` and `telegram.chat_id` (or env vars BOT_TOKEN/CHAT_ID).");
         return null;
       }
       const bot = new TelegramBot(botToken);

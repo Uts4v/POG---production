@@ -29,6 +29,10 @@ service cloud.firestore {
         && exists(/databases/$(database)/documents/companies/$(companyId)/employees/$(request.auth.uid));
     }
 
+    function isValidRole(role) {
+      return role in ["admin", "user"];
+    }
+
     // If users/{uid}.companyId is missing, we must authorize deletes based on the
     // company-scoped employee membership.
     function canAdminDeleteUser(targetUserId) {
@@ -44,7 +48,19 @@ service cloud.firestore {
 
       allow read: if isSignedIn() && request.auth.uid == userId;
 
-      allow update: if isSignedIn() && request.auth.uid == userId;
+      // Users can update their own profile.
+      // Company admins can update another user's `role` (only) when both users
+      // belong to the same company.
+      allow update: if isSignedIn() && (
+        request.auth.uid == userId
+        || (
+          resource.data.keys().hasAll(["companyId"])
+          && isCompanyAdmin(resource.data.companyId)
+          && exists(/databases/$(database)/documents/companies/$(resource.data.companyId)/employees/$(userId))
+          && request.resource.data.diff(resource.data).changedKeys().hasOnly(["role", "updatedAt"])
+          && isValidRole(request.resource.data.role)
+        )
+      );
 
       // Allow admin to delete users if and only if the target user is an employee
       // inside a company where the admin is an admin.
@@ -61,7 +77,22 @@ service cloud.firestore {
       match /employees/{employeeId} {
         allow create: if isSignedIn() && request.auth.uid == employeeId;
         allow read: if isSignedIn() && (request.auth.uid == employeeId || canAccessCompany(companyId));
-        allow update, delete: if isSignedIn() && (request.auth.uid == employeeId || canAccessCompany(companyId));
+        // Employees can update their own doc.
+        // Company admins can update any employee doc, but role changes are admin-only.
+        allow update: if isSignedIn() && (
+          (
+            request.auth.uid == employeeId
+            && !request.resource.data.diff(resource.data).changedKeys().hasAny(["role"])
+          )
+          || (
+            isCompanyAdmin(companyId)
+            && (
+              !request.resource.data.diff(resource.data).changedKeys().hasAny(["role"])
+              || isValidRole(request.resource.data.role)
+            )
+          )
+        );
+        allow delete: if isSignedIn() && (request.auth.uid == employeeId || isCompanyAdmin(companyId));
       }
 
       match /sessions/{sessionId} {
@@ -162,4 +193,3 @@ service cloud.firestore {
     }
   }
 }
-

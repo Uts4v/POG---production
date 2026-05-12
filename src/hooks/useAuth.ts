@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
@@ -16,7 +16,9 @@ import {
   serverTimestamp,
   Timestamp,
   collection,
-  getDocs
+  getDocs,
+  onSnapshot,
+  Unsubscribe,
 } from "firebase/firestore";
 import { auth, db } from "@/integrations/firebase/client";
 
@@ -46,6 +48,7 @@ export const useAuth = () => {
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
+  const profileUnsubRef = useRef<Unsubscribe | null>(null);
 
   const fetchProfile = useCallback(async (userId: string, retries = 3) => {
     for (let attempt = 0; attempt < retries; attempt++) {
@@ -95,23 +98,37 @@ export const useAuth = () => {
       setUser(firebaseUser);
 
       if (firebaseUser) {
-        // If we already have a profile for this user, don't fetch again
-        // This prevents issues with Firestore eventual consistency after signup
-        if (profile && profile.userId === firebaseUser.uid) {
-          setLoading(false);
-          return;
-        }
-
         const fetchedProfile = await fetchProfile(firebaseUser.uid);
         setProfile(fetchedProfile);
+
+        // Keep profile in sync (e.g. role changes) without requiring a re-login.
+        profileUnsubRef.current?.();
+        if (fetchedProfile?.companyId) {
+          const ref = doc(db, "companies", fetchedProfile.companyId, "employees", firebaseUser.uid);
+          profileUnsubRef.current = onSnapshot(
+            ref,
+            (snap) => {
+              if (snap.exists()) setProfile(snap.data() as Profile);
+            },
+            (err) => {
+              console.warn("Profile snapshot listener error:", err);
+            }
+          );
+        }
       } else {
+        profileUnsubRef.current?.();
+        profileUnsubRef.current = null;
         setProfile(null);
       }
       setLoading(false);
     });
 
-    return () => unsubscribe();
-  }, [fetchProfile, profile]);
+    return () => {
+      profileUnsubRef.current?.();
+      profileUnsubRef.current = null;
+      unsubscribe();
+    };
+  }, [fetchProfile]);
 
   const signUp = async ({
     email,
